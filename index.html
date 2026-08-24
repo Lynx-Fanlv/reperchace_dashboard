@@ -1101,14 +1101,21 @@ function buildRows() {
       bp.dates.sort();
       const lastPurchase = bp.dates[bp.dates.length - 1];
       const cycle = cycles[p.name] || state.stdCycle[fam] || 30;
-      // 已回购判定：以上一次应购日为基准——倒数第二次购药的应购日已过，
-      // 且最近一次购药发生在其后 → 该轮应购已完成（患者实际已回购）。
-      // 注意不能用「最近购药+周期」反推（那样永远为 false）。
-      let repurchased = false;
+      // 已回购判定（新口径）：最近一次购药日期落在「当前已回购窗口」内
+      //  未选日期范围 → 距今 ≤ advance 天；选了日期范围 → 落在所选范围内
+      // 应购药日期列显示「预判应购日」= 倒数第二次购药日 + 周期（≥2条记录时），
+      // 用于对比实际购药是提前还是延后（需求：已回购行不呈现下次应购时间）
+      const inRepurchaseWindow = (() => {
+        if (state.start || state.end) {
+          return (!state.start || lastPurchase >= state.start) && (!state.end || lastPurchase <= state.end);
+        }
+        const lo = addDays(today, -state.advance);
+        return lastPurchase >= lo && lastPurchase <= today;
+      })();
+      let expectedDue = null, dueOffset = null;
       if (bp.dates.length >= 2) {
-        const prevPurchase = bp.dates[bp.dates.length - 2];
-        const prevDue = addDays(prevPurchase, cycle);
-        if (prevDue < today && lastPurchase >= prevDue) repurchased = true;
+        expectedDue = addDays(bp.dates[bp.dates.length - 2], cycle);
+        dueOffset = diffDays(lastPurchase, expectedDue); // 正=延期，负=提前，0=按时
       }
       const dueDate = addDays(lastPurchase, cycle);
 
@@ -1136,8 +1143,8 @@ function buildRows() {
       // 状态判定（大类）：
       //  应回购：应购日距今 0~advance 天（优先于「已回购」）
       //  已逾期：应购日已过（任何逾期天数）
-      //  已回购：上一次应购已完成且已购药（本次未到期）
-      //  未到期：应购日超过提前窗口
+      //  已回购：最近购药日期落在「已回购窗口」内（默认距今≤advance，或落在所选日期范围）
+      //  未到期：其余情况
       // 应回购患者再按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据随访内容，用户可点选手动修正）
       const sig = matched ? M.followupSignal(matched) : { signal: "unknown", reason: "" };
       const days = diffDays(dueDate, today); // 正=未来，负=逾期
@@ -1150,19 +1157,25 @@ function buildRows() {
         substatus = STORE.subOverrides[key] || auto; // 用户点选修正优先
       } else if (days < 0) {
         category = "已逾期";
-      } else if (repurchased) {
+      } else if (inRepurchaseWindow) {
         category = "已回购";
       } else {
         category = "未到期";
       }
 
+      const isRepur = category === "已回购";
       rows.push({
         _key: k, product: fam,
         patient_name: p.name, phone: p.phone, physician: bp.physician,
         hospital: bp.hospital, pharmacy: bp.pharmacy,
-        last_purchase: lastPurchase, cycle_days: cycle, due_date: dueDate,
+        last_purchase: lastPurchase, cycle_days: cycle,
+        // 已回购行：due_date 显示「预判应购日」（不呈现下次应购时间）；无预判基准显示空（渲染为 —）
+        due_date: isRepur ? (expectedDue || "") : dueDate,
+        expected_due: expectedDue || "",
+        due_offset: isRepur ? dueOffset : null,   // 已回购行：正=延期/负=提前/0=按时
+        purchase_days_ago: isRepur ? Math.max(0, diffDays(today, lastPurchase)) : null, // 最近购药距今
         days_to_due: days,
-        repurchased,
+        repurchased: inRepurchaseWindow,
         fu_time: matched ? (P.datePart(matched.exec_time) || P.datePart(matched.plan_time) || "") : "",
         fu_type: matched ? (matched.summary_type || "") : "",
         executor: matched ? (matched.executor || "") : "",
@@ -1175,17 +1188,22 @@ function buildRows() {
   }
 
   // 排序：应购药日期落入 [state.start, state.end] 范围的最前（按应购日期升序），
-  // 范围外的随后；同一组内逾期在前（应购日期越早越靠前）。
+  // 范围外的随后；同一组内应购日期越早越靠前。
+  // 已回购行：范围按「最近购药日期」判断，日期取「预判应购日」（无预判基准的空值排最后）。
+  const rangeDate = r => (r.status === "已回购" ? (r.last_purchase || "") : r.due_date);
   const inRange = r => {
     if (!state.start && !state.end) return true;
-    if (state.start && r.due_date < state.start) return false;
-    if (state.end && r.due_date > state.end) return false;
+    const d = rangeDate(r);
+    if (!d) return false;
+    if (state.start && d < state.start) return false;
+    if (state.end && d > state.end) return false;
     return true;
   };
   rows.sort((a, b) => {
     const ia = inRange(a) ? 0 : 1, ib = inRange(b) ? 0 : 1;
     if (ia !== ib) return ia - ib;
-    return a.due_date.localeCompare(b.due_date);
+    const da = a.due_date || "9999-12-31", db = b.due_date || "9999-12-31";
+    return da.localeCompare(db);
   });
   return rows;
 }
@@ -1199,12 +1217,16 @@ function filterRows(rows) {
   if (state.hospitals.size) rs = rs.filter(r => state.hospitals.has(r.hospital || "未知"));
   if (state.executors.size) rs = rs.filter(r => state.executors.has(r.executor || "未知"));
   // 应购药日期范围：裁剪名单（start/end 有值即生效）。
-  // 「已逾期」不受时间窗影响（逾期患者始终保留，便于跟进），只影响 应回购/已回购/未到期。
+  // 「已逾期」不受时间窗影响（逾期患者始终保留，便于跟进）；
+  // 「已回购」行按「最近购药日期」匹配（其应购药日期列显示预判应购日，不参与范围匹配）；
+  // 其余状态按应购药日期（下次应购日）匹配。
   if (state.start || state.end) {
     rs = rs.filter(r => {
       if (r.status === "已逾期") return true;
-      if (state.start && r.due_date < state.start) return false;
-      if (state.end && r.due_date > state.end) return false;
+      const d = r.status === "已回购" ? (r.last_purchase || "") : r.due_date;
+      if (!d) return false;
+      if (state.start && d < state.start) return false;
+      if (state.end && d > state.end) return false;
       return true;
     });
   }
@@ -1385,15 +1407,25 @@ function renderTable() {
 
 function rowHtml(r, idx, inRng, cols) {
   const days = r.days_to_due;
+  const isRepur = r.status === "已回购";
+  // 已回购行：应购药日期列显示「预判应购日」+ 提前/延后标注（无预判基准显示 —）
   let dueTxt = r.due_date || "";
-  if (days > 0) dueTxt += `<span class="sub due">还有${days}天</span>`;
+  if (isRepur) {
+    if (r.due_offset == null) dueTxt = "<span class=\"muted\">—</span>";
+    else if (r.due_offset > 0) dueTxt += `<span class="sub over">延期${r.due_offset}天</span>`;
+    else if (r.due_offset < 0) dueTxt += `<span class="sub due">提前${-r.due_offset}天</span>`;
+    else dueTxt += `<span class="sub due">按时</span>`;
+  } else if (days > 0) dueTxt += `<span class="sub due">还有${days}天</span>`;
   else if (days === 0) dueTxt += `<span class="sub due today">今天</span>`;
   else if (days < 0) dueTxt += `<span class="sub over">逾期${-days}天</span>`;
   // 跟进备注：仅「应回购 / 已逾期」显示填写窗口，其余大类显示 —
   const canNote = r.status === "应回购" || r.status === "已逾期";
   const cells = cols.map(([key]) => {
     if (key === "due_date") return `<td>${dueTxt}</td>`;
-    if (key === "days_to_due") return `<td>${esc(days === 0 ? "今天" : (days > 0 ? "+" + days : String(days)))}</td>`;
+    if (key === "days_to_due") {
+      if (isRepur) return `<td>${esc(r.purchase_days_ago != null ? "购药" + r.purchase_days_ago + "天前" : "—")}</td>`;
+      return `<td>${esc(days === 0 ? "今天" : (days > 0 ? "+" + days : String(days)))}</td>`;
+    }
     if (key === "status") {
       const color = CAT_COLOR[r.status] || "#868e96";
       return `<td><span class="tag" style="background:${color}">${esc(r.status)}</span></td>`;
@@ -1746,6 +1778,10 @@ async function doExport(desen) {
       if (k === "patient_name") return desen ? maskName(r.patient_name) : (r.patient_name || "");
       if (k === "phone") return desen ? maskPhone(r.phone) : (r.phone || "");
       if (k === "physician") return desen ? maskDoctor(r.physician) : (r.physician || "");
+      // 已回购行：距今天数列导出「购药N天前」（与展示一致），应购药日期列已是预判应购日
+      if (k === "days_to_due" && r.status === "已回购") {
+        return r.purchase_days_ago != null ? "购药" + r.purchase_days_ago + "天前" : "";
+      }
       return r[k] == null ? "" : r[k];
     });
     vals.push(r.fu_note || "");
