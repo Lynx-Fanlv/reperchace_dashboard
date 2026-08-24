@@ -1,0 +1,1895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>预计购药分析看板</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --line:#e6e8eb; --text:#1f2937; --muted:#6b7280;
+    --brand:#3b5bdb; --brand-soft:#eef2ff;
+    --good:#0f9d6b; --good-bg:#e7f7f0;
+    --bad:#e03131; --bad-bg:#fdecec;
+    --warn:#f08c00; --warn-bg:#fff4e0;
+    --gray:#868e96; --gray-bg:#f1f3f5;
+    --blue:#3b5bdb; --blue-bg:#eef2ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--text);font-size:14px;line-height:1.6}
+  header{padding:18px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header h1{margin:0;font-size:18px;font-weight:600}
+  header p{margin:4px 0 0;color:var(--muted);font-size:13px}
+  .wrap{max-width:1360px;margin:0 auto;padding:20px 24px 60px}
+  /* 统一上传条（紧凑；整条可点击选择文件） */
+  .upload-bar{display:flex;align-items:center;gap:16px;border:2px dashed var(--line);border-radius:12px;
+    background:var(--panel);padding:14px 20px;transition:.15s;cursor:pointer}
+  .upload-bar:hover{border-color:var(--brand);background:var(--brand-soft)}
+  .upload-bar.drag{border-color:var(--brand);background:var(--brand-soft)}
+  .ub-main{flex:1;min-width:0}
+  .ub-title{font-size:15px;font-weight:600}
+  .ub-hint{font-size:12px;color:var(--muted);margin-top:2px}
+  /* 已选文件面板（确认/删除；开始分析后保留） */
+  .pending-panel{margin-top:12px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:12px 14px;text-align:left}
+  .pp-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .pp-head b{font-size:13px;color:var(--text)}
+  .pp-list{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;min-height:22px}
+  .pp-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .btn{display:inline-block;background:var(--brand);color:#fff;border:none;border-radius:8px;
+       padding:9px 18px;font-size:14px;cursor:pointer}
+  .btn.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+  .btn.sm{padding:5px 12px;font-size:13px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  input[type=file]{display:none}
+  .hidden{display:none}
+  .file-chip{display:inline-flex;align-items:center;gap:6px;background:var(--brand-soft);
+    border:1px solid var(--brand);color:var(--brand);border-radius:999px;padding:3px 10px;font-size:12px}
+  .file-chip .fx{cursor:pointer;font-weight:700;opacity:.6}
+  .file-chip .fx:hover{opacity:1;color:var(--bad)}
+  .file-chip .k-type{font-size:10px;background:var(--brand);color:#fff;border-radius:999px;
+    padding:0 7px;line-height:16px;flex:0 0 auto}
+  .file-chip.k-unknown{border-color:var(--warn);color:var(--warn);background:var(--warn-bg)}
+  .file-chip.k-unknown .k-type{background:var(--warn)}
+  .file-chip.k-unknown .fx{color:var(--warn)}
+  .filebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:16px 0 4px}
+  .filebar .fb-lbl{font-size:13px;color:var(--muted);font-weight:600}
+  .filebar .clear-all{margin-left:auto;background:#fff;color:var(--bad);border:1px solid var(--bad);
+    border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer}
+  .filebar .clear-all:hover{background:var(--bad);color:#fff}
+  .data-info{font-size:12px;color:var(--muted);margin:8px 2px 0}
+  /* 统计卡片 */
+  .summary{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 8px;align-items:stretch}
+  .total{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+         padding:14px 20px;min-width:150px}
+  .total .n{font-size:30px;font-weight:700;line-height:1.1}
+  .total .l{color:var(--muted);font-size:13px}
+  .card{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line);
+        border-radius:12px;padding:14px 18px;cursor:pointer;position:relative;transition:.12s}
+  .card:hover{border-color:var(--brand);transform:translateY(-2px);
+        box-shadow:0 4px 12px rgba(40,80,200,.14)}
+  .card .n{font-size:26px;font-weight:700}
+  .card .l{font-size:13px;color:var(--muted);margin-top:2px}
+  .card .dot{position:absolute;top:14px;right:14px;width:10px;height:10px;border-radius:50%}
+  .card .cue{position:absolute;bottom:10px;right:14px;font-size:11px;color:var(--brand);opacity:.75}
+  .card.active{border-color:var(--brand);box-shadow:0 0 0 2px var(--brand) inset;
+               background:var(--brand-soft)}
+  /* 配置区 */
+  .configbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:12px 0 4px}
+  .configbar .cfg-label{font-size:12px;color:var(--muted);font-weight:600}
+  .configbar .cfg-sep{width:1px;height:20px;background:var(--line);margin:0 2px}
+  .configbar input[type=number]{width:60px;font-size:13px;padding:6px 8px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--text)}
+  .configbar input[type=number]:focus{outline:none;border-color:var(--brand)}
+  /* 动态标准周期输入项（按数据中的品种自动生成） */
+  .cycle-inputs{display:inline-flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .cycle-item{display:inline-flex;align-items:center;gap:4px;background:var(--brand-soft);
+    border:1px solid var(--line);border-radius:8px;padding:3px 10px}
+  .cycle-item .ci-name{font-size:13px;font-weight:600;color:var(--brand)}
+  .cycle-item .ci-num{width:52px;font-size:13px;padding:4px 6px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:var(--text)}
+  .cycle-item .ci-num:focus{outline:none;border-color:var(--brand)}
+  .cycle-item .ci-num:disabled{background:var(--gray-bg);color:var(--muted)}
+  .cycle-item .ci-unit{font-size:12px;color:var(--muted)}
+  .filterbar{position:sticky;top:0;z-index:500;display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0 4px;
+    box-shadow:0 1px 3px rgba(0,0,0,.03)}
+  .filterbar input[type=text], .filterbar input[type=date]{
+    font-size:13px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;
+    background:#fff;color:var(--text);font-family:inherit;transition:.12s}
+  .filterbar input[type=text]:focus, .filterbar input[type=date]:focus{
+    outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+  .fb-search{min-width:200px;flex:0 1 220px}
+  .fb-date{display:flex;align-items:center;gap:6px}
+  .fb-date label{font-size:12px;color:var(--muted);font-weight:600}
+  .fb-sep{color:var(--muted);font-size:12px}
+  .filterbar .fb-export{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .filterbar .export{background:#fff;color:var(--brand);border:1px solid var(--brand);
+    border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;transition:.12s}
+  .filterbar .export:hover{background:var(--brand);color:#fff}
+  .filterbar .export.snap{background:#fff;color:var(--warn);border-color:var(--warn)}
+  .filterbar .export.snap:hover{background:var(--warn);color:#fff}
+  /* 脱敏切换 + 列显隐 */
+  .desen-tog{display:flex;gap:10px;align-items:center}
+  .dt-grp{display:inline-flex;align-items:stretch;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .dt-lbl{font-size:12px;color:var(--muted);padding:6px 8px;background:#fafbfc;border-right:1px solid var(--line);display:flex;align-items:center}
+  .dt-btn{border:none;background:#fff;color:var(--muted);padding:6px 10px;font-size:12px;cursor:pointer;transition:.12s}
+  .dt-btn:hover{background:#f3f4f6}
+  .dt-btn.active{background:var(--brand);color:#fff;font-weight:600}
+  .dt-btn+.dt-btn{border-left:1px solid var(--line)}
+  .dt-btn:disabled{opacity:.4;cursor:not-allowed}
+  .dt-btn.mm-btn.active{background:var(--brand);color:#fff}
+  .col-btn{background:#fff;color:var(--brand);border:1px solid var(--brand);border-radius:8px;
+    padding:6px 12px;font-size:12px;cursor:pointer}
+  .col-panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px;margin:0 0 8px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .col-panel.hidden{display:none}
+  .col-panel label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer}
+  .col-panel input{accent-color:var(--brand)}
+  /* 多选下拉 */
+  .ms{position:relative}
+  .ms-btn{font-size:13px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;
+    color:var(--text);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.12s;white-space:nowrap}
+  .ms-btn:hover{border-color:var(--brand)}
+  .ms-btn.has-sel{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);font-weight:600}
+  .ms-caret{font-size:10px;opacity:.6}
+  .ms-panel{position:absolute;top:calc(100% + 4px);left:0;z-index:1000;background:#fff;border:1px solid var(--line);
+    border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);width:260px;max-width:90vw;display:flex;flex-direction:column}
+  .ms-panel.hidden{display:none}
+  .ms-tools{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px}
+  .ms-tools .ms-count{color:var(--muted);margin-right:auto}
+  .ms-tools .ms-act{color:var(--brand);cursor:pointer}
+  .ms-tools .ms-act:hover{text-decoration:underline}
+  .ms-list{max-height:240px;overflow:auto;padding:4px 0}
+  .ms-list label{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:13px;cursor:pointer;color:var(--text)}
+  .ms-list label:hover{background:#f9fbff}
+  .ms-list label .ms-cnt{margin-left:auto;color:var(--muted);font-size:11px}
+  .ms-list input{accent-color:var(--brand)}
+  .ms-search{width:100%;box-sizing:border-box;margin:8px 12px 4px;padding:7px 10px;border:1px solid var(--line);
+    border-radius:8px;font-size:13px;outline:none;background:#fff;color:var(--text)}
+  .ms-search:focus{border-color:var(--brand)}
+  .filter-section{margin:14px 0 4px}
+  .fs-label{font-size:13px;font-weight:600;color:var(--text);margin:0 2px 8px;
+    display:flex;align-items:center;gap:8px}
+  .fs-label::before{content:"";width:4px;height:14px;border-radius:3px;background:var(--brand)}
+  .fs-hint{font-size:12px;color:var(--muted);font-weight:400}
+  .filterinfo{color:var(--muted);font-size:12px;margin:6px 2px 0}
+  .subtype-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 2px}
+  .subtype-bar.hidden{display:none}
+  .subtype-bar .lbl{font-size:13px;color:var(--muted);font-weight:600}
+  .subtype-bar .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;
+    padding:4px 12px;font-size:13px;cursor:pointer;color:var(--muted)}
+  .subtype-bar .chip:hover{border-color:var(--brand);color:var(--brand)}
+  .subtype-bar .chip.active{background:var(--brand);color:#fff;border-color:var(--brand);font-weight:600}
+  .muted{color:var(--muted)}
+  .tbl-wrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:65vh}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{position:sticky;top:0;background:#fafbfc;color:var(--muted);font-weight:600;white-space:nowrap;z-index:1}
+  tbody tr.data-row{cursor:pointer}
+  tbody tr.data-row:hover{background:#f9fbff}
+  tbody tr.data-row.in-range{background:#f2f6ff}
+  tbody tr.data-row.in-range:hover{background:#e9f0ff}
+  tr.expand-row td{background:#f8faff;border-bottom:1px solid var(--line)}
+  .expand-box{font-size:12px;color:#374151;white-space:pre-wrap;line-height:1.7;padding:2px 0}
+  .expand-box .eb-lbl{color:var(--brand);font-weight:600}
+  .expand-box .eb-row{display:flex;gap:6px;align-items:baseline;padding:1px 0}
+  .expand-box .eb-lbl{flex:0 0 auto}
+  .expand-box .eb-val{flex:1 1 auto;word-break:break-word}
+  .tag{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap;color:#fff}
+  .tag-prod{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;background:var(--brand-soft);color:var(--brand)}
+  .sub{font-size:11px;color:var(--muted);margin-left:4px}
+  .sub.due{color:var(--blue)}
+  .sub.over{color:var(--bad);font-weight:600}
+  .cell-clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:240px}
+  .note-input{width:100%;min-width:110px;font-size:12px;padding:5px 8px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:var(--text);font-family:inherit}
+  .note-input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
+  .note-input:disabled{background:var(--gray-bg);color:var(--muted)}
+  .empty{padding:40px;text-align:center;color:var(--muted)}
+  .pagination{display:flex;justify-content:space-between;align-items:center;margin-top:10px;
+    font-size:13px;color:var(--muted)}
+  .pg-btns{display:flex;gap:8px}
+  .hint{color:var(--muted);font-size:12px;margin:2px 0 0}
+  /* 加载遮罩 */
+  #loading{position:fixed;inset:0;background:rgba(255,255,255,.82);display:flex;align-items:center;justify-content:center;z-index:80}
+  #loading.hidden{display:none}
+  #loading .box{background:#fff;border:1px solid var(--line);border-radius:14px;padding:26px 34px;
+    box-shadow:0 10px 40px rgba(0,0,0,.12);text-align:center}
+  #loading .spin{width:34px;height:34px;border:4px solid var(--brand-soft);border-top-color:var(--brand);
+    border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px}
+  #loading .txt{color:var(--text);font-size:14px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  /* 快照模式提示条 */
+  .snap-banner{background:#fff7ed;border:1px solid var(--warn);color:#9a3412;
+    border-radius:10px;padding:8px 14px;font-size:12px;margin:10px 0}
+  .snap-banner.hidden{display:none}
+  .snap-banner.safe{background:#e7f7f0;border-color:var(--good);color:#0b6b4a}
+</style>
+</head>
+<body>
+<header>
+  <h1>预计购药分析看板</h1>
+  <p>上传「销售明细 + 随访任务 + 患者用药周期」三张表 → 自动计算应购药日期、匹配最近随访、判定回购状态。所有计算均在浏览器内完成，数据不上传任何服务器。</p>
+</header>
+
+<div class="wrap">
+  <!-- 统一上传条（整条可点击选择文件，拖拽亦可） -->
+  <div class="upload-bar" id="dropAll">
+    <div class="ub-main">
+      <div class="ub-title">上传数据</div>
+      <div class="ub-hint">点击此处或拖拽文件到此处 —— 自动识别类型并加入下方列表（可一次多选；识别失败的文件可删除后重新拖入）</div>
+    </div>
+    <input type="file" id="allInput" accept=".xls,.xlsx" multiple>
+  </div>
+
+  <!-- 已选文件面板：确认 / 删除；开始分析后仍保留 -->
+  <div class="pending-panel" id="pendingPanel">
+    <div class="pp-head">
+      <b>已选文件</b>
+      <span class="hint" id="pendingTotalCount"></span>
+    </div>
+    <div class="pp-list" id="pendingList"></div>
+    <div class="pp-actions">
+      <button class="btn" id="startBtn" disabled>开始分析</button>
+      <button class="btn ghost" id="clearPendingBtn">清空选择</button>
+    </div>
+  </div>
+
+  <div id="board" class="hidden">
+    <!-- 快照模式提示 -->
+    <div class="snap-banner hidden" id="snapBanner"></div>
+
+    <!-- 文件管理 -->
+    <div class="filebar">
+      <span class="fb-lbl">已加载数据</span>
+      <span class="data-info" id="dataInfo"></span>
+      <button class="clear-all" id="clearAllBtn">清空全部</button>
+    </div>
+
+    <!-- 状态统计 -->
+    <div class="filter-section">
+      <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」下钻：正常状态 / 预判延期 / 已脱落（点标签可手动切换）</span></div>
+      <div class="summary" id="summary"></div>
+      <div class="subtype-bar hidden" id="substatusBar"></div>
+    </div>
+
+    <!-- 判定配置 -->
+    <div class="configbar">
+      <span class="cfg-label">应回购 = 应购药日前</span>
+      <input type="number" id="advanceNum" value="7" min="0" max="90"> <span class="cfg-label">天内（优先于「已回购」）</span>
+      <span class="cfg-sep"></span>
+      <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改）</span>
+      <span class="cycle-inputs" id="cycleInputs"></span>
+    </div>
+
+    <!-- 筛选区 + 脱敏/列显隐 -->
+    <div class="filterbar">
+      <input type="text" id="searchInput" class="fb-search" placeholder="搜索 患者 / 电话 / 医生 / 医院 / 药房">
+      <div class="ms" id="prodMs">
+        <button class="ms-btn" type="button" id="prodMsBtn">品种：全部 <span class="ms-caret">▾</span></button>
+        <div class="ms-panel hidden" id="prodMsPanel">
+          <div class="ms-tools"><span class="ms-count" id="prodMsCount"></span><a class="ms-act" data-act="all">全选</a><a class="ms-act" data-act="none">清空</a></div>
+          <div class="ms-list" id="prodMsList"></div>
+        </div>
+      </div>
+      <div class="ms" id="hospMs">
+        <button class="ms-btn" type="button" id="hospMsBtn">医院：全部 <span class="ms-caret">▾</span></button>
+        <div class="ms-panel hidden" id="hospMsPanel">
+          <div class="ms-tools"><span class="ms-count" id="hospMsCount"></span><a class="ms-act" data-act="all">全选</a><a class="ms-act" data-act="none">清空</a></div>
+          <div class="ms-list" id="hospMsList"></div>
+        </div>
+      </div>
+      <div class="ms" id="execMs">
+        <button class="ms-btn" type="button" id="execMsBtn">随访人：全部 <span class="ms-caret">▾</span></button>
+        <div class="ms-panel hidden" id="execMsPanel">
+          <div class="ms-tools"><span class="ms-count" id="execMsCount"></span><a class="ms-act" data-act="all">全选</a><a class="ms-act" data-act="none">清空</a></div>
+          <div class="ms-list" id="execMsList"></div>
+        </div>
+      </div>
+      <span class="fb-date"><label>应购药日期</label>
+      <input type="date" id="startDate"><span class="fb-sep">至</span>
+      <input type="date" id="endDate"></span>
+      <button class="btn ghost sm" id="clearBtn">重置筛选</button>
+      <span class="fb-export">
+        <button class="export" id="exportDesenBtn">导出脱敏名单</button>
+        <button class="export" id="exportPlainBtn">导出未脱敏名单</button>
+        <button class="export snap" id="snapshotDesenBtn">下载脱敏快照</button>
+        <button class="export snap" id="snapshotPlainBtn">下载不脱敏快照</button>
+      </span>
+    </div>
+
+    <!-- 脱敏切换 + 列显隐 -->
+    <div class="filterbar" style="margin-top:6px">
+      <span class="desen-tog">
+        <span class="dt-grp"><span class="dt-lbl">姓名</span>
+          <button class="dt-btn active" data-field="name" data-mode="mask">脱敏</button>
+          <button class="dt-btn" data-field="name" data-mode="plain">不脱敏</button></span>
+        <span class="dt-grp"><span class="dt-lbl">电话</span>
+          <button class="dt-btn active" data-field="phone" data-mode="mask">脱敏</button>
+          <button class="dt-btn" data-field="phone" data-mode="plain">不脱敏</button></span>
+        <span class="dt-grp"><span class="dt-lbl">医生</span>
+          <button class="dt-btn active" data-field="doctor" data-mode="mask">脱敏</button>
+          <button class="dt-btn" data-field="doctor" data-mode="plain">不脱敏</button></span>
+      </span>
+      <span class="desen-tog" style="gap:6px">
+        <span class="dt-grp"><span class="dt-lbl">姓名脱敏方式</span>
+          <button class="dt-btn mm-btn active" data-mm="edge">首尾保留</button>
+          <button class="dt-btn mm-btn" data-mm="first">首字保留</button>
+          <button class="dt-btn mm-btn" data-mm="all">全部隐藏</button></span>
+      </span>
+      <span class="hint">展示层实时切换；导出脱敏名单 / 脱敏快照与所选方式保持一致</span>
+      <span style="margin-left:auto"><button class="col-btn" id="colBtn">表头显隐 ▾</button></span>
+    </div>
+    <div class="col-panel hidden" id="colPanel"></div>
+    <div class="filterinfo" id="filterInfo"></div>
+
+    <!-- 名单表 -->
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr id="thead"></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="empty hidden" id="empty">当前筛选无数据</div>
+    </div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+</div>
+
+<!-- 加载遮罩 -->
+<div id="loading" class="hidden">
+  <div class="box">
+    <div class="spin"></div>
+    <div class="txt" id="loadingTxt">正在处理…</div>
+  </div>
+</div>
+
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/exceljs.min.js"></script>
+<script>
+// 预计购药分析：三表映射 / 品种归一化 / 状态判定配置（浏览器端）
+// 纯函数 + 常量，无 DOM 依赖，可在浏览器与 Node 共用。
+
+(function () {
+// ---------------------------------------------------------------------------
+// 品种家族与标准周期
+// 商品名称/产品 列的取值可能是：替雷利珠单抗注射液(百泽安)、泽布替尼胶囊(百悦泽)、
+// 替雷利珠单抗注射液、泽布替尼胶囊、索托克拉片…… 用关键词归一到家族名。
+// ---------------------------------------------------------------------------
+const PRODUCT_FAMILIES = [
+  { family: "百泽安", kws: ["替雷利珠", "百泽安", "tislelizumab"], stdCycle: 21 },
+  { family: "百悦泽", kws: ["泽布替尼", "百悦泽", "zanubrutinib"], stdCycle: 28 },
+  { family: "索托克拉", kws: ["索托克拉", "sotoclax"], stdCycle: 28 },
+];
+
+function normalizeProduct(v) {
+  if (!v) return null;
+  const s = String(v);
+  for (const p of PRODUCT_FAMILIES) {
+    if (p.kws.some(k => s.includes(k))) return p.family;
+  }
+  return s.length > 12 ? s.slice(0, 12) : s; // 未知品种原样截断展示
+}
+
+// 回购分析的状态分类（名单主维度）。
+// 大类：应回购（应购药日进入提前窗口）/ 已回购 / 未到期 / 已逾期（应购药日已过）。
+// 「应回购」患者按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据最近随访内容判定，用户可点选手动修正）。
+const CATEGORIES = ["应回购", "已回购", "未到期", "已逾期"];
+const SUBSTATUS = ["正常状态", "预判延期", "已脱落"];
+
+// ---------------------------------------------------------------------------
+// 三张表的来源识别签名（表头关键字子串，抗尾标）
+// ---------------------------------------------------------------------------
+const TABLE_SIGNATURES = [
+  ["sales", ["销售时间", "商品名称", "会员姓名", "药房名称"]],
+  ["followup", ["任务状态", "服务摘要", "联系电话", "计划执行时间"]],
+  ["cycle", ["用药周期"]],
+];
+
+// 单值字段关键字映射：列标题包含任一关键字即命中，取命中数最多的一列。
+// 随访表是多模板合并大表（同一逻辑字段可能出现多次），故 followup 的
+// 状态相关字段全部走 MULTI（收集所有命中列，行内跨列读取，取有值者）。
+const KEYWORD_RULES = [
+  // ---------- 销售明细 ----------
+  ["sales_time",    ["销售时间", "购药时间", "成交时间"]],
+  ["order_status",  ["订单状态"]],
+  ["product",       ["商品名称", "药品名称", "产品名称", "产品", "药品"]],
+  ["qty",           ["销售数量", "数量"]],
+  ["amount",        ["含税金额", "无税金额", "实收金额", "金额"]],
+  ["member_id",     ["会员号", "会员编号", "会员卡号"]],
+  ["patient_name",  ["会员姓名", "客户姓名", "患者姓名", "姓名"]],
+  ["phone",         ["会员电话", "手机号", "联系电话", "手机", "电话"]],
+  ["hospital",      ["医疗单位", "首诊医院", "就诊医院", "医院"]],
+  ["pharmacy",      ["药房名称", "门店", "药店名称", "药店", "药房"]],
+  ["physician",     ["处方医生", "开单医生", "医生"]],
+  ["indication",    ["适应症", "临床诊断", "诊断"]],
+  ["age",           ["年龄"]],
+  ["gender",        ["性别"]],
+  // ---------- 随访任务 ----------
+  ["task_status",   ["任务状态"]],
+  ["f_patient_name",["患者", "患者姓名", "姓名"]],
+  ["is_key",        ["是否重点患者", "重点患者"]],
+  ["patient_id",    ["患者编号", "患者编码", "编号"]],
+  ["f_phone",       ["联系电话", "手机号", "电话"]],
+  ["plan_time",     ["计划执行时间"]],
+  ["f_product",     ["产品", "药品", "商品"]],
+  ["f_indication",  ["适应症"]],
+  ["task_no",       ["任务编号", "任务ID"]],
+  ["summary_type",  ["服务摘要", "任务摘要", "随访类型", "任务类型"]],
+  ["create_time",   ["创建时间"]],
+  ["executor",      ["执行人", "随访人", "经办人", "负责人", "坐席", "话务员", "客服"]],
+  ["exec_time",     ["执行时间"]],
+  ["cancel_reason", ["取消原因"]],
+  ["follow_note",   ["随访小结", "小结", "随访记录"]],
+  // ---------- 患者用药周期表 ----------
+  ["c_patient_name",["患者", "患者姓名", "姓名"]],
+  ["cycle_days",    ["用药周期", "周期天数", "购药周期", "周期"]],
+];
+
+// 多值字段：随访表状态相关列（收集所有命中列；每行仅其所属模板那一列有值）
+const KEYWORD_RULES_MULTI = [
+  // 「患者目前的用药状态是？」在多个模板中出现
+  ["usage_status", ["患者目前的用药状态"]],
+  // 「据上次随访后，是否已按时购药？」在多个模板中出现
+  ["purchased_on_time", ["是否已按时购药", "已按时购药"]],
+  // 「是否判定患者属于易脱落（失访/停药）高风险？」等
+  ["is_dropout", ["是否判定患者属于易脱落", "是否判定患者属于易脱落（失访/停药）高风险"]],
+  ["dropout_reason", ["判断为易脱落的原因"]],
+  // 「还在按照处方继续使用百悦泽/百泽安」
+  ["still_using", ["还在按照处方继续使用"]],
+  ["near_usage", ["患者近一次用药情况"]],
+  ["delay_reason", ["推迟用药的原因", "延迟用药的具体原因"]],
+  ["stop_reason", ["停药的原因是什么", "停药的具体原因", "停止用药，主要是谁的建议"]],
+  ["dosage", ["的用法用量", "当前用法用量"]],
+];
+
+function normHeader(h) {
+  return String(h == null ? "" : h).replace(/\s+/g, "").toLowerCase();
+}
+
+function _cell(row, col) {
+  if (col == null) return null;
+  const v = row[col];
+  if (v == null) return null;
+  if (typeof v === "number" && Number.isNaN(v)) return null;
+  const s = String(v).trim();
+  return (s === "" || s === "nan" || s === "NaN" || s === "None") ? null : s;
+}
+
+function _gtext(row, colmap, field) {
+  let cols = colmap[field];
+  if (cols == null) return "";
+  if (typeof cols === "number" || typeof cols === "string") cols = [cols];
+  const vals = [], seen = new Set();
+  for (const c of cols) {
+    const v = _cell(row, c);
+    if (v && !seen.has(v)) { seen.add(v); vals.push(v); }
+  }
+  return vals.join("\n") || "";
+}
+
+const RE_PLACEHOLDER = /^(无|无。|没有|暂无|不详|未知|不清楚|不知道|无特殊|无异常|n\/?a|null|-+|\/|\.|。)$/i;
+function isPlaceholder(v) {
+  return !v || RE_PLACEHOLDER.test(String(v).trim());
+}
+
+// ---------------------------------------------------------------------------
+// 表类型识别：按表头签名（关键字命中数打分）
+// ---------------------------------------------------------------------------
+function detectTableType(cols) {
+  const normCols = cols.map(normHeader);
+  let best = "unknown", bestScore = -1;
+  for (const [ttype, sigs] of TABLE_SIGNATURES) {
+    let score = 0;
+    for (const sig of sigs) {
+      const ns = normHeader(sig);
+      if (normCols.some(c => c.includes(ns))) score++;
+    }
+    if (score > bestScore) { bestScore = score; best = ttype; }
+  }
+  // 销售表与随访表都可能含「产品」列，需用更强特征区分
+  if (best === "followup" && normCols.some(c => c.includes("任务状态")) && normCols.some(c => c.includes("服务摘要"))) return "followup";
+  if (best === "sales" && normCols.some(c => c.includes("销售时间")) && normCols.some(c => c.includes("会员姓名"))) return "sales";
+  if (best === "cycle" && normCols.some(c => c.includes("用药周期"))) return "cycle";
+  return bestScore > 0 ? best : "unknown";
+}
+
+// ---------------------------------------------------------------------------
+// 随访修正信号：从匹配到的随访记录提取业务信号
+// 返回 { signal: "dropout" | "nonstd" | "normal" | "unknown", reason, fu_time, task_type, executor }
+//  dropout = 明确停药/脱落/转渠道/失访/去世/不再治疗
+//  nonstd  = 减量/延迟/推迟/未按时购药/易脱落标记等（可能延期信号）
+//  normal  = 规范/按时/足量等正向信号
+// ---------------------------------------------------------------------------
+function RE_DROPOUT_TXT() { return /停药|停用|停[／/]换|转渠道|转院|失访|去世|拒绝随访|脱落|不再治疗|放弃治疗|不治疗/; }
+function RE_NONSTD_TXT() { return /减量|减药|延迟|推迟|延后|未按时|漏服|漏药|自行|不规范|不依从|经济|负担|买不起|吃不起/; }
+function RE_NORMAL_TXT() { return /规范用药|正常用药|按时|足量|按医嘱|规律用药|继续使用|正在使用/; }
+
+function followupSignal(fu) {
+  if (!fu) return { signal: "unknown", reason: "" };
+  const parts = [];
+  // 1. 患者目前的用药状态
+  const usage = fu.usage_status || "";
+  if (usage) {
+    if (/停药|停用/.test(usage)) return { signal: "dropout", reason: "用药状态:" + usage };
+    if (RE_NONSTD_TXT().test(usage)) return { signal: "nonstd", reason: "用药状态:" + usage };
+    if (RE_NORMAL_TXT().test(usage)) parts.push("用药状态:" + usage);
+  }
+  // 2. 是否已按时购药（注意：该列部分模板行会混入「复查周期」类噪声值）
+  const ontime = fu.purchased_on_time || "";
+  if (ontime) {
+    if (/^(是|已)/.test(ontime)) parts.push("已按时购药");
+    else if (/^(否|未)/.test(ontime)) return { signal: "nonstd", reason: "未按时购药" };
+    else if (/不清楚|未知/.test(ontime)) parts.push("按时购药情况:" + ontime);
+    // 复查周期类噪声（月度/季度复查等）不参与判定
+  }
+  // 3. 是否判定易脱落 + 易脱落原因
+  const drop = fu.is_dropout || "";
+  if (drop && /^(是|有)/.test(drop)) {
+    const dr = fu.dropout_reason || "";
+    if (RE_DROPOUT_TXT().test(dr)) return { signal: "dropout", reason: "易脱落:" + dr };
+    return { signal: "nonstd", reason: "易脱落判定:" + (dr || drop) };
+  }
+  if (fu.dropout_reason && RE_DROPOUT_TXT().test(fu.dropout_reason)) {
+    return { signal: "dropout", reason: "易脱落原因:" + fu.dropout_reason };
+  }
+  // 4. 仍在按处方使用（百悦泽/百泽安）
+  const still = fu.still_using || "";
+  if (still) {
+    if (/是的|正在|在吃|在服|继续|使用/.test(still) && !/没有|停|否/.test(still)) parts.push(still);
+    if (/停药|没有使用|没有在吃|停止|停用|否/.test(still) && !/正在|继续|在吃|在服/.test(still)) {
+      return { signal: "dropout", reason: "未继续使用:" + still };
+    }
+    if (/不确定|没怎么用|漏/.test(still)) return { signal: "nonstd", reason: "未继续使用:" + still };
+  }
+  // 5. 停药原因列有值 → 脱落；推迟/延迟原因列有值 → 非规范
+  if (fu.stop_reason) return { signal: "dropout", reason: "停药原因:" + fu.stop_reason.slice(0, 40) };
+  if (fu.delay_reason) return { signal: "nonstd", reason: "推迟原因:" + fu.delay_reason.slice(0, 40) };
+  // 6. 随访小结文本（自由文本，仅作弱信号）
+  const note = fu.follow_note || "";
+  if (note) {
+    if (RE_DROPOUT_TXT().test(note)) return { signal: "dropout", reason: note.slice(0, 50) };
+    if (RE_NONSTD_TXT().test(note)) return { signal: "nonstd", reason: note.slice(0, 50) };
+    if (RE_NORMAL_TXT().test(note)) parts.push("小结正常");
+  }
+  // 7. 任务状态修正：超期未购药随访任务 + 已按时购药=否 已在上文处理；执行失败/未执行不参与
+  if (fu.task_status && /执行失败|超期未完成/.test(fu.task_status) && /超期未购药/.test(fu.summary_type || "")) {
+    return { signal: "nonstd", reason: "超期未购药随访:" + fu.task_status };
+  }
+  return { signal: parts.length ? "normal" : "unknown", reason: parts.join("；") };
+}
+
+if (typeof window !== "undefined") {
+  window.Mapping = {
+    PRODUCT_FAMILIES, normalizeProduct, CATEGORIES, SUBSTATUS,
+    TABLE_SIGNATURES, detectTableType, normHeader, _cell, _gtext,
+    isPlaceholder, followupSignal, KEYWORD_RULES, KEYWORD_RULES_MULTI,
+  };
+}
+})();
+
+</script>
+<script>
+// 三表解析与归一化 pipeline（浏览器端）
+// 用 SheetJS 解析 Excel，按表类型（销售明细/随访任务/患者用药周期）归一化。
+// 无 DOM 依赖（XLSX 为全局变量）。
+
+(function () {
+const M = (typeof window !== "undefined" ? window : globalThis).Mapping;
+const XLSX = (typeof window !== "undefined" ? window : globalThis).XLSX;
+
+function normHeader(h) { return M.normHeader(h); }
+
+function asList(v) { return v == null ? [] : (Array.isArray(v) ? v : [v]); }
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function fmtDateTime(d) {
+  const Y = d.getFullYear(), Mo = pad2(d.getMonth() + 1), D = pad2(d.getDate());
+  const h = pad2(d.getHours()), mi = pad2(d.getMinutes()), s = pad2(d.getSeconds());
+  const date = `${Y}-${Mo}-${D}`;
+  return (h === "00" && mi === "00" && s === "00") ? date : `${date} ${h}:${mi}:${s}`;
+}
+
+// 单元格 → 字符串（Date 保留时分；Excel 日期序列号 → 日期字符串）
+function cellStr(v) {
+  if (v == null) return null;
+  if (v instanceof Date) return fmtDateTime(v);
+  if (typeof v === "number") {
+    // Excel 序列号（1900 日期系统，基准 1899-12-30）≈ 20000~80000
+    if (v > 20000 && v < 80000) {
+      const ms = Math.round((v - 25569) * 86400000); // 25569 = 1970-01-01 的序列号
+      return fmtDateTime(new Date(ms));
+    }
+    if (Number.isNaN(v)) return null;
+  }
+  const s = String(v).trim();
+  if (s === "" || s === "nan" || s === "NaN" || s === "None") return null;
+  return s;
+}
+function cellStrSafe(v) { return cellStr(v) == null ? "" : cellStr(v); }
+
+// 日期字段统一取 YYYY-MM-DD
+function datePart(v) {
+  const s = cellStr(v);
+  if (!s) return null;
+  const m = s.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})/);
+  if (!m) return null;
+  return `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}`;
+}
+
+// 单值字段关键字映射（只取本表相关字段）
+function mapColumns(tableType, rawCols) {
+  const rules = M.KEYWORD_RULES;
+  const assigned = {};
+  const used = new Set();
+  // 各表生效的字段前缀
+  const FOLLOWUP_FIELDS = ["task_status", "summary_type", "executor", "follow_note", "cancel_reason",
+    "create_time", "plan_time", "exec_time", "task_no", "patient_id", "is_key"];
+  let prefix;
+  if (tableType === "sales") prefix = f => !f.startsWith("f_") && !f.startsWith("c_");
+  else if (tableType === "followup") prefix = f => f.startsWith("f_") || FOLLOWUP_FIELDS.includes(f);
+  else prefix = f => f === "c_patient_name" || f === "cycle_days";
+
+  const candList = rawCols.map((rc, idx) => [idx, normHeader(rc)]);
+  for (const [field, kws] of rules) {
+    if (!prefix(field)) continue;
+    if (field === "exec_time") {
+      // 执行时间 vs 计划执行时间：排除含「计划」的列
+      const clean = candList.filter(([, nc]) => !used.has(nc) && nc.includes("执行时间") && !nc.includes("计划"));
+      // 注意：candList 的 key 是 idx，这里需要重新按 idx 过滤
+      const cand = candList.filter(([idx]) => !used.has(idx) && !normHeader(rawCols[idx]).includes("计划") && normHeader(rawCols[idx]).includes("执行时间"));
+      let best = null, bestHits = 0;
+      for (const [idx, nc] of cand) {
+        let hits = 0;
+        for (const kw of kws) if (nc.includes(kw)) hits++;
+        if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
+      }
+      if (best !== null) { assigned[field] = best; used.add(best); }
+      continue;
+    }
+    let best = null, bestHits = 0;
+    for (const [idx, nc] of candList) {
+      if (used.has(idx)) continue;
+      let hits = 0;
+      for (const kw of kws) if (nc.includes(kw)) hits++;
+      if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
+    }
+    if (best !== null) { assigned[field] = best; used.add(best); }
+  }
+  // 多值字段（仅随访表）：收集所有命中列
+  if (tableType === "followup") {
+    for (const [field, kws] of M.KEYWORD_RULES_MULTI) {
+      const cols = [];
+      candList.forEach(([idx, nc]) => {
+        if (!used.has(idx) && kws.some(kw => nc.includes(kw))) cols.push(idx);
+      });
+      if (cols.length) { assigned[field] = cols; cols.forEach(i => used.add(i)); }
+    }
+  }
+  return assigned;
+}
+
+// 在原始数组的前 maxScan 行中找最像表头的一行
+function detectHeaderRow(aoaStr, maxScan = 15) {
+  if (!aoaStr || !aoaStr.length) return 0;
+  const kwPools = [];
+  for (const [, kws] of M.KEYWORD_RULES) kwPools.push(...kws);
+  for (const [, kws] of M.KEYWORD_RULES_MULTI) kwPools.push(...kws);
+  const kwLower = kwPools.map(k => k.toLowerCase());
+  let bestRow = 0, bestScore = -1;
+  const scan = Math.min(maxScan, aoaStr.length);
+  for (let i = 0; i < scan; i++) {
+    const row = aoaStr[i];
+    const cells = row.map(c => String(c == null ? "" : c).trim())
+      .filter(c => c !== "" && c !== "nan" && c !== "None");
+    if (!cells.length) continue;
+    let hit = 0;
+    for (const c of cells) {
+      const cl = c.toLowerCase();
+      if (kwLower.some(kw => cl.includes(kw))) hit++;
+    }
+    const ratio = cells.length / Math.max(1, row.length);
+    const score = hit * 3 + ratio * 2;
+    if (score > bestScore) { bestScore = score; bestRow = i; }
+  }
+  return bestRow;
+}
+
+function rowToObj(cols, r) {
+  const o = {};
+  for (let i = 0; i < r.length; i++) o[i] = cellStr(r[i]);
+  return o;
+}
+
+function _gtext(row, colmap, field) {
+  const c = colmap[field];
+  if (c == null) return "";
+  const idxs = Array.isArray(c) ? c : [c];
+  const vals = [], seen = new Set();
+  for (const i of idxs) {
+    const v = row[i];
+    if (v && !seen.has(v)) { seen.add(v); vals.push(v); }
+  }
+  return vals.join("\n") || "";
+}
+
+// ---------- 销售明细归一化 ----------
+function normalizeSales(row, colmap, sourceFile, sheetName, i) {
+  const rec = {
+    source: "sales", _row_id: `${sourceFile}::sales::${sheetName}::${i}`,
+    sales_time: datePart(_gtext(row, colmap, "sales_time")) || _gtext(row, colmap, "sales_time"),
+    order_status: _gtext(row, colmap, "order_status") || null,
+    product_raw: _gtext(row, colmap, "product") || null,
+    product: M.normalizeProduct(_gtext(row, colmap, "product")) || null,
+    qty: _gtext(row, colmap, "qty") || null,
+    amount: _gtext(row, colmap, "amount") || null,
+    member_id: _gtext(row, colmap, "member_id") || null,
+    patient_name: _gtext(row, colmap, "patient_name") || null,
+    phone: _gtext(row, colmap, "phone") || null,
+    hospital: _gtext(row, colmap, "hospital") || null,
+    pharmacy: _gtext(row, colmap, "pharmacy") || null,
+    physician: _gtext(row, colmap, "physician") || null,
+    indication: _gtext(row, colmap, "indication") || null,
+    age: _gtext(row, colmap, "age") || null,
+    gender: _gtext(row, colmap, "gender") || null,
+  };
+  return rec;
+}
+
+// ---------- 随访任务归一化 ----------
+function normalizeFollowup(row, colmap, sourceFile, sheetName, i) {
+  const multi = f => _gtext(row, colmap, f) || null;
+  const rec = {
+    source: "followup", _row_id: `${sourceFile}::followup::${sheetName}::${i}`,
+    task_status: _gtext(row, colmap, "task_status") || null,
+    patient_name: _gtext(row, colmap, "f_patient_name") || null,
+    is_key: _gtext(row, colmap, "is_key") || null,
+    patient_id: _gtext(row, colmap, "patient_id") || null,
+    phone: _gtext(row, colmap, "f_phone") || null,
+    plan_time: _gtext(row, colmap, "plan_time") || null,
+    exec_time: _gtext(row, colmap, "exec_time") || null,
+    product_raw: _gtext(row, colmap, "f_product") || null,
+    product: M.normalizeProduct(_gtext(row, colmap, "f_product")) || null,
+    indication: _gtext(row, colmap, "f_indication") || null,
+    task_no: _gtext(row, colmap, "task_no") || null,
+    summary_type: _gtext(row, colmap, "summary_type") || null,
+    create_time: _gtext(row, colmap, "create_time") || null,
+    executor: _gtext(row, colmap, "executor") || null,
+    cancel_reason: _gtext(row, colmap, "cancel_reason") || null,
+    follow_note: _gtext(row, colmap, "follow_note") || null,
+    usage_status: multi("usage_status"),
+    purchased_on_time: multi("purchased_on_time"),
+    is_dropout: multi("is_dropout"),
+    dropout_reason: multi("dropout_reason"),
+    still_using: multi("still_using"),
+    near_usage: multi("near_usage"),
+    delay_reason: multi("delay_reason"),
+    stop_reason: multi("stop_reason"),
+    dosage: multi("dosage"),
+  };
+  return rec;
+}
+
+// ---------- 用药周期表归一化 ----------
+function normalizeCycle(row, colmap, sourceFile, sheetName, i) {
+  const name = (_gtext(row, colmap, "c_patient_name") || "").trim();
+  const days = (_gtext(row, colmap, "cycle_days") || "").trim();
+  const n = parseInt(days, 10);
+  return {
+    source: "cycle", _row_id: `${sourceFile}::cycle::${sheetName}::${i}`,
+    patient_name: name || null,
+    cycle_days: (Number.isFinite(n) && n > 0) ? n : null,
+    cycle_raw: days || null,
+  };
+}
+
+function normalizeSheet(tableType, rows, cols, sourceFile, sheetName) {
+  const colmap = mapColumns(tableType, cols);
+  const out = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (tableType === "sales") out.push(normalizeSales(row, colmap, sourceFile, sheetName, i));
+    else if (tableType === "followup") out.push(normalizeFollowup(row, colmap, sourceFile, sheetName, i));
+    else out.push(normalizeCycle(row, colmap, sourceFile, sheetName, i));
+  }
+  return out;
+}
+
+async function loadWorkbook(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(new Uint8Array(buf), { type: "array", cellDates: true });
+  const out = [];
+  for (const name of wb.SheetNames) {
+    const sheet = wb.Sheets[name];
+    const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, cellDates: true });
+    const aoaStr = aoa.map(r => r.map(cellStrSafe));
+    const hr = detectHeaderRow(aoaStr);
+    let cols, rows;
+    if (hr === 0) {
+      cols = aoa[0].map((c, i) => String(c == null ? "" : c).trim() || `col_${i}`);
+      rows = aoa.slice(1).map(r => rowToObj(cols, r));
+    } else {
+      cols = aoa[hr].map((c, i) => String(c == null ? "" : c).trim() || `col_${i}`);
+      rows = aoa.slice(hr + 1).map(r => rowToObj(cols, r));
+    }
+    // 跳过全空行
+    rows = rows.filter(r => Object.values(r).some(v => v != null && String(v).trim() !== ""));
+    const ttype = M.detectTableType(cols);
+    out.push({ source_file: file.name, sheet_name: name, ttype, cols, rows });
+  }
+  return out;
+}
+
+async function processFiles(files) {
+  const result = { sales: [], followups: [], cycles: {} };
+  for (const f of files) {
+    try {
+      const sheets = await loadWorkbook(f);
+      for (const sh of sheets) {
+        if (sh.ttype === "unknown") {
+          console.warn("无法识别表类型:", sh.source_file, sh.sheet_name, sh.cols.slice(0, 10));
+          continue;
+        }
+        if (sh.ttype === "cycle") {
+          // 周期表：合并成 {患者名: 周期天数}
+          for (const rec of normalizeSheet("cycle", sh.rows, sh.cols, sh.source_file, sh.sheet_name)) {
+            if (rec.patient_name && rec.cycle_days) result.cycles[rec.patient_name] = rec.cycle_days;
+          }
+        } else {
+          const recs = normalizeSheet(sh.ttype, sh.rows, sh.cols, sh.source_file, sh.sheet_name);
+          if (sh.ttype === "sales") result.sales.push(...recs);
+          else result.followups.push(...recs);
+        }
+      }
+    } catch (e) {
+      console.warn("处理文件失败", f.name, e);
+    }
+  }
+  return result;
+}
+
+// 快速识别单个 Excel 文件的表类型（销售/随访/周期）。
+// 用 sheetRows 只读前 20 行做表头判定，避免全量解析大文件。
+async function detectFileType(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(new Uint8Array(buf), { type: "array", cellDates: true, sheetRows: 20 });
+    for (const name of wb.SheetNames) {
+      const sheet = wb.Sheets[name];
+      const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, cellDates: true });
+      const aoaStr = aoa.map(r => r.map(cellStrSafe));
+      const hr = detectHeaderRow(aoaStr);
+      const cols = (aoa[hr] || []).map((c, i) => String(c == null ? "" : c).trim() || `col_${i}`);
+      const ttype = M.detectTableType(cols);
+      if (ttype !== "unknown") return ttype;
+    }
+    return "unknown";
+  } catch (e) {
+    console.warn("识别文件类型失败", file.name, e);
+    return "unknown";
+  }
+}
+
+// 电话归一化：仅数字（跨表匹配用）
+function phoneDigits(v) {
+  if (!v) return "";
+  return String(v).replace(/\D/g, "");
+}
+
+// 脱敏姓名 / 电话 / 医生
+// 姓名/医生脱敏方式 maskMode：edge=首尾保留（张*三/欧**德）、first=首字保留（张**/欧***）、all=全部隐藏（***）
+// 替换几个字符就有几个 *
+function maskPersonName(v, mode) {
+  if (!v) return "";
+  const s = String(v).trim();
+  if (s.length <= 1) return "*";
+  if (mode === "all") return "*".repeat(s.length);
+  if (mode === "first") return s[0] + "*".repeat(s.length - 1);
+  if (s.length === 2) return s[0] + "*";
+  return s[0] + "*".repeat(s.length - 2) + s[s.length - 1];
+}
+function desensitize(rec, namePlain = false, phonePlain = false, doctorPlain = false, maskMode = "edge") {
+  const out = Object.assign({}, rec);
+  const name = out.patient_name;
+  if (name && !namePlain) {
+    out.patient_name = maskPersonName(name, maskMode);
+  }
+  const phone = out.phone;
+  if (phone && !phonePlain) {
+    const s = String(phone);
+    const digits = s.replace(/\D/g, "");
+    if (digits.length >= 7) out.phone = digits.slice(0, 3) + "****" + digits.slice(-4);
+    else out.phone = s.replace(/\d/g, "*");
+  }
+  const doctor = out.physician;
+  if (doctor && !doctorPlain) {
+    out.physician = maskPersonName(doctor, maskMode);
+  }
+  return out;
+}
+
+if (typeof window !== "undefined") {
+  window.Pipeline = { cellStr, datePart, mapColumns, detectHeaderRow, normalizeSheet,
+    loadWorkbook, processFiles, detectFileType, desensitize, phoneDigits, fmtDateTime };
+}
+})();
+
+</script>
+<script>
+// 预计购药分析看板：前端编排层
+// 全部计算在浏览器内完成：三表解析(pipeline.js) → 归一化 → 合并计算 → 渲染。
+// 无后端、无网络请求；数据从不离开本机。
+
+(function () {
+const M = window.Mapping;
+const P = window.Pipeline;
+const CATEGORIES = M.CATEGORIES;    // 应回购 / 已回购 / 未到期 / 已逾期
+const SUBSTATUS = M.SUBSTATUS;      // 正常状态 / 预判延期 / 已脱落（应回购下钻）
+
+const CAT_COLOR = {
+  "应回购": "#e03131",   // 进入应购窗口，需要跟进
+  "已回购": "#0f9d6b",   // 上次已按时回购，本次未到期
+  "未到期": "#3b5bdb",   // 尚未进入窗口
+  "已逾期": "#f08c00",   // 应购药日已过
+};
+const SUB_COLOR = {
+  "正常状态": "#0f9d6b", // 随访正常，预计按时回购
+  "预判延期": "#f08c00", // 随访显示减量/延迟/未按时
+  "已脱落": "#868e96",   // 随访明确停药/脱落
+};
+
+// 名单表列（note = 用户手动填写的跟进备注列，随快照保存）
+const LIST_COLS = [
+  ["patient_name", "患者"],
+  ["phone", "电话"],
+  ["physician", "医生"],
+  ["product", "品种"],
+  ["hospital", "医院"],
+  ["pharmacy", "药房"],
+  ["last_purchase", "最近购药"],
+  ["cycle_days", "周期(天)"],
+  ["due_date", "应购药日期"],
+  ["days_to_due", "距今天数"],
+  ["fu_time", "匹配随访时间"],
+  ["fu_type", "随访类型"],
+  ["executor", "随访人"],
+  ["status", "状态"],
+  ["substatus", "下钻"],
+  ["fu_signal", "随访信号"],
+  ["note", "跟进备注"],
+];
+
+const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, subOverrides: {} };
+let SNAP_MODE = false;
+let SNAP_BASE = null; // 快照全量行基准（不可变，供快照模式筛选；避免 DATA.rows 被覆盖后累积丢失）
+
+// 界面状态
+const state = {
+  cats: new Set(), subs: new Set(), products: new Set(), hospitals: new Set(), executors: new Set(),
+  start: null, end: null, q: "",
+  advance: 7,      // 应回购 = 应购药日前 advance 天内
+  stdCycle: Object.fromEntries(M.PRODUCT_FAMILIES.map(p => [p.family, p.stdCycle])),
+  plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示
+  maskMode: "edge",   // 姓名/医生脱敏方式：edge=首尾保留、first=首字保留、all=全部隐藏
+  hiddenCols: new Set(),
+  page: 1, pageSize: 50,
+};
+let DATA = { rows: [] };
+let CURRENT = { summary: null };
+
+const $ = s => document.querySelector(s);
+
+/* ============ 工具 ============ */
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function fmtSize(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(2) + " MB";
+}
+function showLoading(txt) { $("#loadingTxt").textContent = txt || "正在处理…"; $("#loading").classList.remove("hidden"); }
+function hideLoading() { $("#loading").classList.add("hidden"); }
+function download(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+}
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function addDays(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function diffDays(a, b) { // a - b（天）
+  return Math.round((new Date(a + "T00:00:00") - new Date(b + "T00:00:00")) / 86400000);
+}
+function phoneDigits(v) { return P.phoneDigits(v); }
+
+// 脱敏规则（展示层按 state 开关实时切换；导出/快照与所选脱敏方式保持一致）
+// maskMode（state.maskMode）：edge=首尾保留（张*三/欧**德）、first=首字保留（张**/欧***）、all=全部隐藏（***）
+// 替换几个字符就有几个 *
+function maskPersonName(v, mode) {
+  if (!v) return "";
+  const s = String(v).trim();
+  if (s.length <= 1) return "*";
+  if (mode === "all") return "*".repeat(s.length);
+  if (mode === "first") return s[0] + "*".repeat(s.length - 1);
+  // edge（默认）：保留首尾
+  if (s.length === 2) return s[0] + "*";
+  return s[0] + "*".repeat(s.length - 2) + s[s.length - 1];
+}
+function maskName(v) { return maskPersonName(v, state.maskMode); }
+function maskPhone(v) {
+  if (!v) return "";
+  const d = String(v).replace(/\D/g, "");
+  return d.length >= 7 ? d.slice(0, 3) + "****" + d.slice(-4) : String(v).replace(/\d/g, "*");
+}
+function maskDoctor(v) { return maskPersonName(v, state.maskMode); }
+// 按当前脱敏开关取展示值
+function disp(r, key) {
+  if (key === "patient_name") return state.plainName ? (r.patient_name || "") : maskName(r.patient_name);
+  if (key === "phone") return state.plainPhone ? (r.phone || "") : maskPhone(r.phone);
+  if (key === "physician") return state.plainDoctor ? (r.physician || "") : maskDoctor(r.physician);
+  return r[key] == null ? "" : r[key];
+}
+// 手动备注的存储键（患者 × 品种）
+function noteKey(r) { return (r._key || "") + "::" + r.product; }
+
+/* ============ 合并计算（核心） ============ */
+// 1) 按患者（电话/姓名）聚合销售记录 → 每患者每品种的购药时间序列
+// 2) 应购药日期 = 最近购药日 + 周期（周期表优先，否则标准周期）
+// 3) 匹配随访：应购药日前最近一次（同品种优先；无则其他品种；再无则之后最早一条）
+// 4) 状态判定（优先级从高到低）：
+//    随访异常(停药/减量/延迟/未按时) → 延期/脱落
+//    应购日距今 0~advance 天 → 即将回购
+//    应购日已过（任何逾期天数） → 延期/脱落
+//    上一次应购已完成且已购药 → 已回购
+//    其余 → 未到期
+function buildRows() {
+  const sales = STORE.sales;
+  const followups = STORE.followups;
+  const cycles = STORE.cycles;
+
+  // ---- 销售按患者聚合 ----
+  const patMap = {}; // key: phoneDigits || name
+  const keyOf = r => phoneDigits(r.phone) || (r.patient_name || "未知");
+  for (const s of sales) {
+    if (!s.sales_time || !s.product) continue;
+    const k = keyOf(s);
+    const p = (patMap[k] = patMap[k] || { name: s.patient_name || "未知", phone: s.phone || "", byProduct: {} });
+    if (s.patient_name) p.name = s.patient_name;
+    if (s.phone) p.phone = s.phone;
+    const fam = s.product;
+    const bp = (p.byProduct[fam] = p.byProduct[fam] || { dates: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "" });
+    bp.dates.push(s.sales_time);
+    if (s.hospital) bp.hospital = s.hospital;
+    if (s.pharmacy) bp.pharmacy = s.pharmacy;
+    if (s.physician) bp.physician = s.physician;
+  }
+
+  // ---- 随访按患者索引 ----
+  const fuByKey = {}; // key -> [fu]
+  const fuByName = {};
+  for (const fu of followups) {
+    const k = phoneDigits(fu.phone);
+    const nm = (fu.patient_name || "").trim();
+    if (k) (fuByKey[k] = fuByKey[k] || []).push(fu);
+    if (nm) (fuByName[nm] = fuByName[nm] || []).push(fu);
+  }
+  const fuIndex = (name, phone) => {
+    const k = phoneDigits(phone);
+    const list = (k && fuByKey[k]) || fuByName[name] || [];
+    return list;
+  };
+  const fuDate = fu => P.datePart(fu.exec_time) || P.datePart(fu.plan_time) || null;
+
+  // ---- 逐患者×品种计算 ----
+  const rows = [];
+  const today = todayStr();
+  for (const k in patMap) {
+    const p = patMap[k];
+    const fus = fuIndex(p.name, p.phone);
+    for (const fam in p.byProduct) {
+      const bp = p.byProduct[fam];
+      if (!bp.dates.length) continue;
+      bp.dates.sort();
+      const lastPurchase = bp.dates[bp.dates.length - 1];
+      const cycle = cycles[p.name] || state.stdCycle[fam] || 30;
+      // 已回购判定：以上一次应购日为基准——倒数第二次购药的应购日已过，
+      // 且最近一次购药发生在其后 → 该轮应购已完成（患者实际已回购）。
+      // 注意不能用「最近购药+周期」反推（那样永远为 false）。
+      let repurchased = false;
+      if (bp.dates.length >= 2) {
+        const prevPurchase = bp.dates[bp.dates.length - 2];
+        const prevDue = addDays(prevPurchase, cycle);
+        if (prevDue < today && lastPurchase >= prevDue) repurchased = true;
+      }
+      const dueDate = addDays(lastPurchase, cycle);
+
+      // 匹配随访：优先应购药日前最近一次（同品种；优先「已完成/有执行时间」的真实随访）
+      let matched = null;
+      if (fus.length) {
+        const sameFam = fus.filter(f => f.product === fam);
+        let pool = sameFam.length ? sameFam : fus;
+        // 优先已执行的随访（有执行时间或任务已完成），避免未执行任务污染匹配
+        const executed = pool.filter(f => f.exec_time || (f.task_status && f.task_status.includes("已完成")));
+        if (executed.length) pool = executed;
+        const withDate = pool.map(f => ({ f, d: fuDate(f) })).filter(x => x.d);
+        if (withDate.length) {
+          const before = withDate.filter(x => x.d <= dueDate);
+          if (before.length) {
+            before.sort((a, b) => b.d.localeCompare(a.d)); // 最近一次在前
+            matched = before[0].f;
+          } else {
+            withDate.sort((a, b) => a.d.localeCompare(b.d)); // 之后最早
+            matched = withDate[0].f;
+          }
+        }
+      }
+
+      // 状态判定（大类）：
+      //  应回购：应购日距今 0~advance 天（优先于「已回购」）
+      //  已逾期：应购日已过（任何逾期天数）
+      //  已回购：上一次应购已完成且已购药（本次未到期）
+      //  未到期：应购日超过提前窗口
+      // 应回购患者再按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据随访内容，用户可点选手动修正）
+      const sig = matched ? M.followupSignal(matched) : { signal: "unknown", reason: "" };
+      const days = diffDays(dueDate, today); // 正=未来，负=逾期
+      let category, substatus = "";
+      if (days >= 0 && days <= state.advance) {
+        category = "应回购";
+        const auto = sig.signal === "dropout" ? "已脱落"
+                   : sig.signal === "nonstd" ? "预判延期" : "正常状态";
+        const key = k + "::" + fam;
+        substatus = STORE.subOverrides[key] || auto; // 用户点选修正优先
+      } else if (days < 0) {
+        category = "已逾期";
+      } else if (repurchased) {
+        category = "已回购";
+      } else {
+        category = "未到期";
+      }
+
+      rows.push({
+        _key: k, product: fam,
+        patient_name: p.name, phone: p.phone, physician: bp.physician,
+        hospital: bp.hospital, pharmacy: bp.pharmacy,
+        last_purchase: lastPurchase, cycle_days: cycle, due_date: dueDate,
+        days_to_due: days,
+        repurchased,
+        fu_time: matched ? (P.datePart(matched.exec_time) || P.datePart(matched.plan_time) || "") : "",
+        fu_type: matched ? (matched.summary_type || "") : "",
+        executor: matched ? (matched.executor || "") : "",
+        fu_note: matched ? (matched.follow_note || "") : "",
+        fu_signal: sig.signal === "unknown" ? "" : sig.reason,
+        status: category, substatus,
+        _matched: matched,
+      });
+    }
+  }
+
+  // 排序：应购药日期落入 [state.start, state.end] 范围的最前（按应购日期升序），
+  // 范围外的随后；同一组内逾期在前（应购日期越早越靠前）。
+  const inRange = r => {
+    if (!state.start && !state.end) return true;
+    if (state.start && r.due_date < state.start) return false;
+    if (state.end && r.due_date > state.end) return false;
+    return true;
+  };
+  rows.sort((a, b) => {
+    const ia = inRange(a) ? 0 : 1, ib = inRange(b) ? 0 : 1;
+    if (ia !== ib) return ia - ib;
+    return a.due_date.localeCompare(b.due_date);
+  });
+  return rows;
+}
+
+/* ============ 筛选 ============ */
+function filterRows(rows) {
+  let rs = rows;
+  if (state.cats.size) rs = rs.filter(r => state.cats.has(r.status));
+  if (state.subs.size) rs = rs.filter(r => r.substatus && state.subs.has(r.substatus));
+  if (state.products.size) rs = rs.filter(r => state.products.has(r.product));
+  if (state.hospitals.size) rs = rs.filter(r => state.hospitals.has(r.hospital || "未知"));
+  if (state.executors.size) rs = rs.filter(r => state.executors.has(r.executor || "未知"));
+  // 应购药日期范围：裁剪名单（start/end 有值即生效）。
+  // 「已逾期」不受时间窗影响（逾期患者始终保留，便于跟进），只影响 应回购/已回购/未到期。
+  if (state.start || state.end) {
+    rs = rs.filter(r => {
+      if (r.status === "已逾期") return true;
+      if (state.start && r.due_date < state.start) return false;
+      if (state.end && r.due_date > state.end) return false;
+      return true;
+    });
+  }
+  if (state.q) {
+    const ql = state.q.trim().toLowerCase();
+    rs = rs.filter(r => {
+      for (const f of ["patient_name", "phone", "physician", "hospital", "pharmacy", "product", "executor"]) {
+        if (r[f] && String(r[f]).toLowerCase().includes(ql)) return true;
+      }
+      return false;
+    });
+  }
+  return rs;
+}
+
+function buildSummary(rows) {
+  const by_status = {}, by_substatus = {}, by_product = {}, by_hospital = {}, by_executor = {}, by_fu_type = {};
+  for (const r of rows) {
+    by_status[r.status] = (by_status[r.status] || 0) + 1;
+    if (r.substatus) by_substatus[r.substatus] = (by_substatus[r.substatus] || 0) + 1;
+    by_product[r.product || "未知"] = (by_product[r.product || "未知"] || 0) + 1;
+    by_hospital[r.hospital || "未知"] = (by_hospital[r.hospital || "未知"] || 0) + 1;
+    by_executor[r.executor || "未知"] = (by_executor[r.executor || "未知"] || 0) + 1;
+    by_fu_type[r.fu_type || "无随访"] = (by_fu_type[r.fu_type || "无随访"] || 0) + 1;
+  }
+  return { total: rows.length, by_status, by_substatus, by_product, by_hospital, by_executor, by_fu_type };
+}
+
+/* ============ 渲染 ============ */
+function renderSummary(d) {
+  let html = `<div class="total"><div class="n">${d.total}</div><div class="l">名单总数</div></div>`;
+  for (const s of CATEGORIES) {
+    const n = (d.by_status && d.by_status[s]) || 0;
+    const active = state.cats.has(s) ? "active" : "";
+    const color = CAT_COLOR[s] || "#868e96";
+    html += `<div class="card ${active}" data-status="${s}" title="点击筛选「${s}」，再次点击取消" style="border-left:4px solid ${color}">
+      <span class="dot" style="background:${color}"></span><div class="n" style="color:${color}">${n}</div><div class="l">${s}</div><span class="cue">点选</span></div>`;
+  }
+  $("#summary").innerHTML = html;
+  document.querySelectorAll("#summary .card").forEach(c => {
+    c.onclick = () => {
+      const s = c.dataset.status;
+      if (state.cats.has(s)) state.cats.delete(s); else state.cats.add(s);
+      state.page = 1;
+      refresh();
+    };
+  });
+  // 应回购下钻子状态（chips 点选筛选）
+  const subBar = $("#substatusBar");
+  if ((d.by_substatus && Object.keys(d.by_substatus).length)) {
+    subBar.classList.remove("hidden");
+    subBar.innerHTML = '<span class="lbl">应回购下钻</span>' + SUBSTATUS.map(k => {
+      const n = d.by_substatus[k] || 0;
+      if (!n) return "";
+      const act = state.subs.has(k) ? "active" : "";
+      return `<span class="chip ${act}" data-sub="${k}" style="border-color:${SUB_COLOR[k]}">${k} (${n})</span>`;
+    }).join("");
+    subBar.querySelectorAll(".chip").forEach(c => c.onclick = () => {
+      const k = c.dataset.sub;
+      if (state.subs.has(k)) state.subs.delete(k); else state.subs.add(k);
+      state.page = 1;
+      refresh();
+    });
+  } else {
+    subBar.classList.add("hidden");
+  }
+  buildMs("prodMs", d.by_product, state.products, "品种");
+  buildMs("hospMs", d.by_hospital, state.hospitals, "医院");
+  buildMs("execMs", d.by_executor, state.executors, "随访人");
+  updateFilterInfo();
+}
+
+function buildMs(msId, data, stateSet, label) {
+  const entries = Object.entries(data || {}).sort((a, b) => b[1] - a[1]);
+  const list = $("#" + msId + "List");
+  list.innerHTML = entries.map(([k, v]) =>
+    `<label><input type="checkbox" value="${esc(k)}" ${stateSet.has(k) ? "checked" : ""}><span>${esc(k)}</span><span class="ms-cnt">${v}</span></label>`).join("");
+  list.querySelectorAll("input").forEach(cb => {
+    cb.onchange = () => { if (cb.checked) stateSet.add(cb.value); else stateSet.delete(cb.value); state.page = 1; refresh(); };
+  });
+  const panel = $("#" + msId + "Panel");
+  let search = panel.querySelector(".ms-search");
+  if (!search) {
+    search = document.createElement("input");
+    search.className = "ms-search";
+    search.placeholder = "输入关键字检索…";
+    list.parentNode.insertBefore(search, list);
+  }
+  const applyFilter = () => {
+    const q = search.value.trim().toLowerCase();
+    list.querySelectorAll("label").forEach(lb => {
+      const k = lb.querySelector("input").value;
+      const hit = !q || k.toLowerCase().includes(q) || stateSet.has(k);
+      lb.style.display = hit ? "" : "none";
+    });
+  };
+  search.oninput = applyFilter;
+  applyFilter();
+  panel.querySelectorAll(".ms-act").forEach(a => a.onclick = () => {
+    if (a.dataset.act === "all") entries.forEach(([k]) => stateSet.add(k)); else stateSet.clear();
+    state.page = 1; refresh();
+  });
+  const n = stateSet.size, tot = entries.length;
+  const txt = (n === 0 || n === tot) ? "全部" : (n + "项");
+  $("#" + msId + "Btn").innerHTML = `${label}：${txt} <span class="ms-caret">▾</span>`;
+  $("#" + msId + "Btn").classList.toggle("has-sel", n > 0 && n < tot);
+  $("#" + msId + "Count").textContent = n === 0 ? "未选（=全部）" : ("已选 " + n + "/" + tot);
+}
+
+function updateFilterInfo() {
+  const parts = [];
+  if (state.q) parts.push("搜索=" + state.q);
+  if (state.cats.size) parts.push("状态=" + [...state.cats].join("/"));
+  if (state.subs.size) parts.push("下钻=" + [...state.subs].join("/"));
+  if (state.products.size) parts.push("品种=" + state.products.size + "项");
+  if (state.hospitals.size) parts.push("医院=" + state.hospitals.size + "项");
+  if (state.executors.size) parts.push("随访人=" + state.executors.size + "项");
+  if (state.start || state.end) parts.push("应购日期=" + ((state.start || "…") + "~" + (state.end || "…")));
+  const plain = [];
+  if (state.plainName) plain.push("姓名明文");
+  if (state.plainPhone) plain.push("电话明文");
+  if (state.plainDoctor) plain.push("医生明文");
+  if (plain.length) parts.push("展示:" + plain.join("/"));
+  $("#filterInfo").textContent = parts.length ? ("筛选：" + parts.join(" · ")) : "";
+}
+
+const visibleCols = () => LIST_COLS.filter(([key]) => !state.hiddenCols.has(key));
+
+function renderTable() {
+  const cols = visibleCols();
+  const total = DATA.rows.length;
+  const pages = Math.max(1, Math.ceil(total / state.pageSize));
+  if (state.page > pages) state.page = pages;
+  const start = (state.page - 1) * state.pageSize;
+  const rows = DATA.rows.slice(start, start + state.pageSize);
+  const inRange = r => {
+    if (!state.start && !state.end) return true;
+    if (state.start && r.due_date < state.start) return false;
+    if (state.end && r.due_date > state.end) return false;
+    return true;
+  };
+  $("#thead").innerHTML = cols.map(([, label]) => `<th>${label}</th>`).join("");
+  const tb = $("#tbody");
+  if (!total) { tb.innerHTML = ""; $("#empty").classList.remove("hidden"); }
+  else {
+    $("#empty").classList.add("hidden");
+    tb.innerHTML = rows.map((r, i) => rowHtml(r, start + i, inRange(r), cols)).join("");
+  }
+  // 手动备注列：输入即保存到 STORE.notes（快照时一并保存）
+  tb.querySelectorAll("input.note-input").forEach(inp => {
+    inp.addEventListener("input", () => { STORE.notes[inp.dataset.key] = inp.value; });
+    inp.addEventListener("click", e => e.stopPropagation()); // 不触发行展开
+  });
+  // 应回购下钻子状态：点击循环切换（正常状态 → 预判延期 → 已脱落 → 正常状态）
+  tb.querySelectorAll("span.sub-tag.clickable").forEach(tag => {
+    tag.addEventListener("click", e => {
+      e.stopPropagation();
+      const key = tag.dataset.key;
+      const cur = tag.dataset.sub;
+      const seq = SUBSTATUS;
+      const next = seq[(seq.indexOf(cur) + 1) % seq.length];
+      STORE.subOverrides[key] = next;
+      state.page = 1;
+      refresh();
+    });
+  });
+  tb.querySelectorAll("tr.data-row").forEach(tr => {
+    tr.onclick = () => {
+      const r = DATA.rows[+tr.dataset.idx];
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains("expand-row")) { next.remove(); return; }
+      tb.querySelectorAll("tr.expand-row").forEach(x => x.remove());
+      tr.insertAdjacentHTML("afterend", expandHtml(r, cols.length));
+    };
+  });
+  renderPagination(total);
+}
+
+function rowHtml(r, idx, inRng, cols) {
+  const days = r.days_to_due;
+  let dueTxt = r.due_date || "";
+  if (days > 0) dueTxt += `<span class="sub due">还有${days}天</span>`;
+  else if (days === 0) dueTxt += `<span class="sub due today">今天</span>`;
+  else if (days < 0) dueTxt += `<span class="sub over">逾期${-days}天</span>`;
+  // 跟进备注：仅「应回购 / 已逾期」显示填写窗口，其余大类显示 —
+  const canNote = r.status === "应回购" || r.status === "已逾期";
+  const cells = cols.map(([key]) => {
+    if (key === "due_date") return `<td>${dueTxt}</td>`;
+    if (key === "days_to_due") return `<td>${esc(days === 0 ? "今天" : (days > 0 ? "+" + days : String(days)))}</td>`;
+    if (key === "status") {
+      const color = CAT_COLOR[r.status] || "#868e96";
+      return `<td><span class="tag" style="background:${color}">${esc(r.status)}</span></td>`;
+    }
+    if (key === "substatus") {
+      if (!r.substatus) return `<td><span class="muted">—</span></td>`;
+      const color = SUB_COLOR[r.substatus] || "#868e96";
+      const note = SNAP_MODE ? "" : "title=\"点击切换下钻状态\"";
+      return `<td><span class="tag sub-tag ${note ? "clickable" : ""}" data-key="${esc(noteKey(r))}" data-sub="${esc(r.substatus)}" style="background:${color};cursor:${SNAP_MODE ? "default" : "pointer"}" ${note}>${esc(r.substatus)}</span></td>`;
+    }
+    if (key === "product") return `<td><span class="tag-prod">${esc(disp(r, key))}</span></td>`;
+    if (key === "note") {
+      if (!canNote) return `<td><span class="muted">—</span></td>`;
+      const k = noteKey(r);
+      const v = STORE.notes[k] || "";
+      return `<td><input class="note-input" data-key="${esc(k)}" value="${esc(v)}" placeholder="填写跟进备注" ${SNAP_MODE ? "disabled" : ""}></td>`;
+    }
+    if (key === "fu_type" || key === "fu_signal") return `<td><div class="cell-clip">${esc(disp(r, key))}</div></td>`;
+    return `<td>${esc(disp(r, key))}</td>`;
+  }).join("");
+  return `<tr class="data-row ${inRng ? "in-range" : ""}" data-idx="${idx}">${cells}</tr>`;
+}
+
+function expandHtml(r, colspan) {
+  const sec = (lbl, val) => val ? `<div class="eb-row"><span class="eb-lbl">${lbl}：</span><span class="eb-val">${esc(val)}</span></div>` : "";
+  const fu = r._matched;
+  let fuDetail = "";
+  if (fu) {
+    const rows = [
+      ["随访时间", P.datePart(fu.exec_time) || P.datePart(fu.plan_time) || ""],
+      ["任务状态", fu.task_status],
+      ["服务摘要", fu.summary_type],
+      ["执行人", fu.executor],
+      ["用药状态", fu.usage_status],
+      ["是否按时购药", fu.purchased_on_time],
+      ["是否易脱落", fu.is_dropout],
+      ["易脱落原因", fu.dropout_reason],
+      ["推迟/延迟原因", fu.delay_reason],
+      ["停药原因", fu.stop_reason],
+      ["用法用量", fu.dosage],
+      ["随访小结", fu.follow_note],
+    ];
+    fuDetail = rows.map(([l, v]) => sec(l, v)).join("");
+  }
+  // 展开卡：仅随访信息 + 跟进备注（医院/药房/医生/购药等业务字段已在主表展示，不再重复）
+  return `<tr class="expand-row"><td colspan="${colspan}"><div class="expand-box">
+    ${sec("跟进备注", STORE.notes[noteKey(r)] || "")}
+    ${fuDetail || '<div class="eb-row"><span class="eb-lbl">无匹配随访记录</span></div>'}
+  </div></td></tr>`;
+}
+
+function renderPagination(total) {
+  const pages = Math.max(1, Math.ceil(total / state.pageSize));
+  $("#pagination").innerHTML = `
+    <span>共 ${total} 条 · 每页 ${state.pageSize} 条 · 第 ${state.page}/${pages} 页</span>
+    <span class="pg-btns">
+      <button class="btn ghost sm" id="prevPg" ${state.page <= 1 ? "disabled" : ""}>‹ 上一页</button>
+      <button class="btn ghost sm" id="nextPg" ${state.page >= pages ? "disabled" : ""}>下一页 ›</button>
+    </span>`;
+  $("#prevPg").onclick = () => { if (state.page > 1) { state.page--; renderTable(); window.scrollTo({ top: 0, behavior: "smooth" }); } };
+  $("#nextPg").onclick = () => { if (state.page < pages) { state.page++; renderTable(); window.scrollTo({ top: 0, behavior: "smooth" }); } };
+}
+
+async function refresh() {
+  // 快照模式：数据已内嵌在快照行中（STORE 为空），基于不可变的 SNAP_BASE 筛选，不重建、不累积丢失
+  const all = SNAP_MODE ? (SNAP_BASE || DATA.rows) : buildRows();
+  CURRENT.summary = buildSummary(all);
+  DATA.rows = filterRows(all);
+  // 多选面板用「全量」计数（不随筛选遮蔽）
+  const full = buildSummary(all);
+  $("#summary").innerHTML = "";
+  renderSummary(Object.assign({}, CURRENT.summary, {
+    by_product: full.by_product, by_hospital: full.by_hospital, by_executor: full.by_executor,
+  }));
+  renderTable();
+}
+
+/* ============ 上传 / 分析（统一上传 → 列表确认/删除 → 开始分析后保留） ============ */
+const KIND_LABEL = { sales: "销售", followup: "随访", cycle: "周期", unknown: "未识别" };
+// 待分析文件列表：每项 { file, kind }
+let pendingFiles = [];
+
+function addPendingFiles(files, kind) {
+  let added = 0;
+  for (const f of files) {
+    if (!pendingFiles.some(p => p.file.name === f.name && p.file.size === f.size)) {
+      pendingFiles.push({ file: f, kind });
+      added++;
+    }
+  }
+  if (added) renderPendingList();
+  return added;
+}
+function renderPendingList() {
+  const list = $("#pendingList");
+  if (!pendingFiles.length) {
+    list.innerHTML = '<span class="empty-tip">尚未选择文件 —— 点击上方「选择文件」或拖入表格</span>';
+  } else {
+    list.innerHTML = pendingFiles.map((p, i) =>
+      `<span class="file-chip ${p.kind === "unknown" ? "k-unknown" : ""}">${esc(p.file.name)} (${fmtSize(p.file.size)})` +
+      `<span class="k-type">${KIND_LABEL[p.kind] || "未识别"}</span>` +
+      `<span class="fx" data-idx="${i}" title="移除">×</span></span>`).join("");
+  }
+  const unknown = pendingFiles.filter(p => p.kind === "unknown").length;
+  $("#pendingTotalCount").textContent = pendingFiles.length
+    ? `共 ${pendingFiles.length} 个文件${unknown ? ` · ${unknown} 个未识别` : ""}`
+    : "";
+  $("#startBtn").disabled = pendingFiles.length === 0;
+}
+
+// 统一上传：一次选多个文件 → 逐个识别类型 → 加入列表（识别失败标「未识别」）
+async function classifyFiles(files) {
+  const fileList = Array.from(files || []);
+  if (!fileList.length) return;
+  showLoading("正在识别文件类型…");
+  for (const f of fileList) {
+    let kind = "unknown";
+    try {
+      kind = await P.detectFileType(f);
+    } catch (e) {
+      console.warn("识别失败", f.name, e);
+      kind = "unknown";
+    }
+    addPendingFiles([f], kind);
+  }
+  hideLoading();
+}
+
+// 绑定统一上传区：整条可点击选择文件（无独立按钮），拖拽亦可
+const dropAll = $("#dropAll");
+dropAll.onclick = () => $("#allInput").click();
+$("#allInput").onchange = e => { if (e.target.files.length) { classifyFiles(e.target.files); e.target.value = ""; } };
+["dragover", "dragenter"].forEach(ev => dropAll.addEventListener(ev, e => { e.preventDefault(); dropAll.classList.add("drag"); }));
+["dragleave", "drop"].forEach(ev => dropAll.addEventListener(ev, e => { e.preventDefault(); dropAll.classList.remove("drag"); }));
+dropAll.addEventListener("drop", e => { const f = e.dataTransfer.files; if (f.length) classifyFiles(f); });
+
+// 列表项移除（事件委托）
+document.addEventListener("click", e => {
+  const fx = e.target.closest ? e.target.closest("#pendingList .fx") : null;
+  if (!fx) return;
+  pendingFiles.splice(+fx.dataset.idx, 1);
+  renderPendingList();
+});
+
+$("#clearPendingBtn").onclick = () => {
+  pendingFiles = [];
+  renderPendingList();
+};
+
+// 开始分析：用当前列表全量解析；分析后保留列表与上传窗口，可增删后再次分析
+$("#startBtn").onclick = async () => {
+  const unknown = pendingFiles.filter(p => p.kind === "unknown");
+  if (unknown.length) {
+    alert("以下文件未能识别为三类数据（销售/随访/周期），请移除后重试：\n" +
+      unknown.map(p => p.file.name).join("\n"));
+    return;
+  }
+  const files = pendingFiles.map(p => p.file);
+  if (!files.length) return;
+  showLoading("正在解析三张表并归一化计算…");
+  $("#startBtn").disabled = true;
+  try {
+    const res = await P.processFiles(files);
+    if (!res.sales.length) { alert("未识别到销售明细数据：请确认上传了含「销售时间/商品名称/会员姓名」列的销售报表。"); return; }
+    STORE.sales = res.sales;
+    STORE.followups = res.followups;
+    STORE.cycles = res.cycles;
+    $("#board").classList.remove("hidden");
+    $("#dataInfo").textContent =
+      `销售明细 ${res.sales.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人`;
+    // 按数据实际出现的品种动态维护标准周期（内置值优先，新品种默认 30 天）
+    const products = [...new Set(res.sales.map(s => s.product).filter(Boolean))];
+    ensureStdCycles(products);
+    renderCycleInputs();
+    // 默认不设应购日期范围（=全部显示）；用户选择范围后表单按范围裁剪
+    state.page = 1;
+    await refresh();
+  } catch (err) {
+    alert("分析失败：" + (err && err.message ? err.message : err));
+  } finally {
+    hideLoading();
+    renderPendingList();
+  }
+};
+renderPendingList();
+
+$("#clearAllBtn").onclick = () => {
+  if (!confirm("确定清空全部已加载数据？")) return;
+  STORE.sales = []; STORE.followups = []; STORE.cycles = {}; STORE.files = []; STORE.notes = {}; STORE.subOverrides = {};
+  CURRENT = { summary: null }; DATA = { rows: [] };
+  $("#board").classList.add("hidden");
+};
+
+/* ============ 筛选交互 ============ */
+$("#clearBtn").onclick = () => {
+  state.cats.clear(); state.subs.clear(); state.products.clear(); state.hospitals.clear(); state.executors.clear();
+  state.start = null; state.end = null;
+  state.q = "";
+  $("#searchInput").value = ""; $("#startDate").value = ""; $("#endDate").value = "";
+  state.page = 1; refresh();
+};
+$("#startDate").onchange = e => { state.start = e.target.value || null; state.page = 1; refresh(); };
+$("#endDate").onchange = e => { state.end = e.target.value || null; state.page = 1; refresh(); };
+$("#advanceNum").onchange = e => { state.advance = Math.max(0, parseInt(e.target.value, 10) || 7); refresh(); };
+// 标准周期维护（周期表未覆盖患者时使用）
+// 标准周期按「数据中出现品种」动态维护：
+// 确保每个出现品种都有标准周期 —— 内置品种族用内置值，新品种默认 30 天（用户可在界面修改）
+function ensureStdCycles(products) {
+  for (const p of M.PRODUCT_FAMILIES) {
+    if (state.stdCycle[p.family] == null) state.stdCycle[p.family] = p.stdCycle;
+  }
+  for (const fam of products) {
+    if (state.stdCycle[fam] == null) state.stdCycle[fam] = 30;
+  }
+}
+// 按 state.stdCycle 动态渲染每个品种的周期输入框（可单独修改，即时重算）
+function renderCycleInputs() {
+  const box = $("#cycleInputs");
+  const fams = Object.keys(state.stdCycle).sort((a, b) => a.localeCompare(b, "zh"));
+  if (!fams.length) {
+    box.innerHTML = '<span class="hint">开始分析后按数据中的品种自动生成</span>';
+    return;
+  }
+  box.innerHTML = fams.map(fam =>
+    `<span class="cycle-item" data-fam="${esc(fam)}"><span class="ci-name">${esc(fam)}</span>` +
+    `<input type="number" class="ci-num" min="1" max="365" value="${state.stdCycle[fam]}">` +
+    `<span class="ci-unit">天</span></span>`).join("");
+  box.querySelectorAll(".ci-num").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const item = inp.closest ? inp.closest(".cycle-item") : null;
+      if (!item) return;
+      const fam = item.dataset.fam;
+      state.stdCycle[fam] = Math.max(1, parseInt(inp.value, 10) || 30);
+      refresh();
+    });
+  });
+}
+renderCycleInputs();
+let searchTimer = null;
+$("#searchInput").addEventListener("input", e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { state.q = e.target.value.trim(); state.page = 1; refresh(); }, 350);
+});
+
+function closeAllPopovers() {
+  document.querySelectorAll(".ms-panel:not(.hidden)").forEach(p => p.classList.add("hidden"));
+  $("#colPanel").classList.add("hidden");
+}
+function togglePanel(panel) {
+  const open = !panel.classList.contains("hidden");
+  closeAllPopovers();
+  if (!open) panel.classList.remove("hidden");
+}
+$("#prodMsBtn").onclick = e => { e.stopPropagation(); togglePanel($("#prodMsPanel")); };
+$("#hospMsBtn").onclick = e => { e.stopPropagation(); togglePanel($("#hospMsPanel")); };
+$("#execMsBtn").onclick = e => { e.stopPropagation(); togglePanel($("#execMsPanel")); };
+$("#colBtn").onclick = e => {
+  e.stopPropagation();
+  const p = $("#colPanel");
+  const open = !p.classList.contains("hidden");
+  closeAllPopovers();
+  if (open) return;
+  p.innerHTML = LIST_COLS.map(([key, label]) =>
+    `<label><input type="checkbox" data-col="${key}" ${state.hiddenCols.has(key) ? "" : "checked"}> ${label}</label>`).join("");
+  p.querySelectorAll("input").forEach(cb => cb.onchange = () => {
+    if (cb.checked) state.hiddenCols.delete(cb.dataset.col); else state.hiddenCols.add(cb.dataset.col);
+    renderTable();
+  });
+  p.classList.remove("hidden");
+};
+document.addEventListener("click", e => {
+  if (e.target.closest(".ms") || e.target.closest("#colPanel") || e.target.closest("#colBtn")) return;
+  closeAllPopovers();
+});
+
+// 脱敏开关：姓名 / 电话 / 医生（脱敏=默认，不脱敏=明文）
+function bindDesenToggle() {
+  document.querySelectorAll(".dt-btn").forEach(b => b.onclick = () => {
+    const field = b.dataset.field, mode = b.dataset.mode;
+    const plain = (mode === "plain");
+    if (field === "name") state.plainName = plain;
+    else if (field === "phone") state.plainPhone = plain;
+    else if (field === "doctor") state.plainDoctor = plain;
+    b.parentElement.querySelectorAll(".dt-btn").forEach(x => x.classList.toggle("active", x === b));
+    state.page = 1;
+    refresh();
+  });
+}
+bindDesenToggle();
+function syncDesenBtns() {
+  const map = { name: state.plainName, phone: state.plainPhone, doctor: state.plainDoctor };
+  document.querySelectorAll(".dt-btn").forEach(b => {
+    const active = (b.dataset.mode === "plain") === !!map[b.dataset.field];
+    b.classList.toggle("active", active);
+  });
+}
+
+// 脱敏方式选择：edge=首尾保留 / first=首字保留 / all=全部隐藏（展示层/导出/快照共用）
+function bindMaskMode() {
+  document.querySelectorAll(".mm-btn").forEach(b => b.onclick = () => {
+    state.maskMode = b.dataset.mm || "edge";
+    syncMaskModeBtns();
+    state.page = 1;
+    refresh();
+  });
+}
+bindMaskMode();
+function syncMaskModeBtns() {
+  document.querySelectorAll(".mm-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.mm === state.maskMode));
+}
+
+/* ============ 导出 Excel（当前筛选，带样式：表头加粗、状态/下钻浅色着色、逾期标红） ============ */
+// 浅色系导出配色：浅底 + 深字
+const EXPORT_CAT_STYLE = {
+  "应回购": { fill: "FFFCEBEB", font: "FF791F1F" },
+  "已回购": { fill: "FFEAF3DE", font: "FF27500A" },
+  "未到期": { fill: "FFE6F1FB", font: "FF0C447C" },
+  "已逾期": { fill: "FFFAEEDA", font: "FF633806" },
+};
+const EXPORT_SUB_STYLE = {
+  "正常状态": { fill: "FFEAF3DE", font: "FF27500A" },
+  "预判延期": { fill: "FFFAEEDA", font: "FF633806" },
+  "已脱落": { fill: "FFF1EFE8", font: "FF444441" },
+};
+
+async function doExport(desen) {
+  const rows = DATA.rows;
+  if (!rows.length) { alert("当前筛选无数据可导出"); return; }
+  const header = LIST_COLS.map(([, l]) => l).concat(["随访小结"]);
+  // 列索引（用于着色）：状态=status、下钻=substatus、距今天数=days_to_due
+  const idxStatus = LIST_COLS.findIndex(([k]) => k === "status");
+  const idxSub = LIST_COLS.findIndex(([k]) => k === "substatus");
+  const idxDays = LIST_COLS.findIndex(([k]) => k === "days_to_due");
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("预计购药名单");
+  // 表头：浅蓝底 + 深蓝加粗字
+  const hRow = ws.addRow(header);
+  hRow.eachCell(c => {
+    c.font = { bold: true, color: { argb: "FF0C447C" } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6F1FB" } };
+    c.alignment = { vertical: "middle", horizontal: "center" };
+    c.border = { bottom: { style: "thin", color: { argb: "FFB5D4F4" } } };
+  });
+  // 数据行
+  for (const r of rows) {
+    const vals = LIST_COLS.map(([k]) => {
+      if (k === "note") return STORE.notes[noteKey(r)] || "";
+      if (k === "patient_name") return desen ? maskName(r.patient_name) : (r.patient_name || "");
+      if (k === "phone") return desen ? maskPhone(r.phone) : (r.phone || "");
+      if (k === "physician") return desen ? maskDoctor(r.physician) : (r.physician || "");
+      return r[k] == null ? "" : r[k];
+    });
+    vals.push(r.fu_note || "");
+    const row = ws.addRow(vals);
+    // 状态列：浅色填充 + 深色字
+    const st = EXPORT_CAT_STYLE[r.status];
+    if (idxStatus >= 0 && st) {
+      row.getCell(idxStatus + 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: st.fill } };
+      row.getCell(idxStatus + 1).font = { bold: true, color: { argb: st.font } };
+    }
+    // 下钻列：浅色填充 + 深色字（仅应回购有值）
+    const sb = r.substatus ? EXPORT_SUB_STYLE[r.substatus] : null;
+    if (idxSub >= 0 && sb) {
+      row.getCell(idxSub + 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: sb.fill } };
+      row.getCell(idxSub + 1).font = { color: { argb: sb.font } };
+    }
+    // 距今天数：逾期标红加粗
+    if (idxDays >= 0 && typeof r.days_to_due === "number" && r.days_to_due < 0) {
+      row.getCell(idxDays + 1).font = { bold: true, color: { argb: "FFE03131" } };
+    }
+  }
+  // 列宽（17 个 LIST_COLS 列 + 随访小结）
+  const widths = [10, 14, 10, 10, 22, 18, 12, 10, 12, 10, 14, 18, 10, 10, 10, 24, 22, 40];
+  ws.columns.forEach((c, i) => { c.width = widths[i] || 12; });
+  // 冻结首行
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  const buf = await wb.xlsx.writeBuffer();
+  download(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    desen ? "预计购药名单_脱敏.xlsx" : "预计购药名单_未脱敏.xlsx");
+}
+$("#exportDesenBtn").onclick = () => doExport(true);
+$("#exportPlainBtn").onclick = () => {
+  const ok = confirm(
+    "⚠️ 隐私风险提示\n\n「未脱敏导出」包含明文姓名、电话、医生等个人敏感信息。\n仅可分享给可信的团队成员，切勿通过外部渠道转发。\n\n确定导出？"
+  );
+  if (ok) doExport(false);
+};
+
+/* ============ 快照生成（自包含 HTML） ============ */
+async function doSnapshot(desen) {
+  if (!DATA.rows.length) { alert("当前筛选无数据可生成快照"); return; }
+  showLoading(desen ? "正在生成脱敏快照…" : "正在生成不脱敏快照…");
+  try {
+    const rows = DATA.rows.map(r => {
+      const c = Object.assign({}, r);
+      delete c._matched; delete c._row_id;
+      if (desen) {
+        c.patient_name = maskName(c.patient_name);
+        c.phone = maskPhone(c.phone);
+        c.physician = maskDoctor(c.physician);
+      }
+      return c;
+    });
+    const snap = {
+      desen, rows, notes: STORE.notes, subOverrides: STORE.subOverrides,
+      summary: CURRENT.summary, state: {
+        advance: state.advance, stdCycle: state.stdCycle,
+        start: state.start, end: state.end, q: state.q,
+        cats: [...state.cats], subs: [...state.subs],
+        products: [...state.products],
+        hospitals: [...state.hospitals], executors: [...state.executors],
+        plainName: state.plainName, plainPhone: state.plainPhone, plainDoctor: state.plainDoctor,
+        maskMode: state.maskMode,
+        hiddenCols: [...state.hiddenCols],
+      },
+      buildAt: new Date().toISOString(),
+      note: "预计购药分析快照",
+    };
+    const dataJson = JSON.stringify(snap).replace(/</g, "\\u003c");
+    const dataScript = `<\script>window.__SNAP__=${dataJson};<\/script>`;
+    const bootstrap = `<\script>(function(){
+      if(window.__SNAP__&&window.AppCore){window.AppCore.loadSnapshot(window.__SNAP__);}
+      else{var ld=document.getElementById('loading');if(ld){ld.querySelector('.txt').textContent='快照加载失败：脚本未内联。请用 index.html 生成快照。';ld.classList.remove('hidden');}}
+    })();<\/script>`;
+    let html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+    // 快照为只读视图，剥离外链库（xlsx / exceljs），避免 file:// 下加载失败
+    html = html.replace('<' + 'script src="vendor/xlsx.full.min.js"></sc' + 'ript>', "");
+    html = html.replace('<' + 'script src="vendor/exceljs.min.js"></sc' + 'ript>', "");
+    const bodyIdx = html.lastIndexOf("</body>");
+    html = html.slice(0, bodyIdx) + dataScript + bootstrap + "\n" + html.slice(bodyIdx);
+    download(new Blob([html], { type: "text/html" }),
+      desen ? "预计购药名单_脱敏快照.html" : "预计购药名单_不脱敏快照.html");
+  } catch (err) {
+    alert("快照生成失败：" + (err && err.message ? err.message : err));
+  } finally {
+    hideLoading();
+  }
+}
+$("#snapshotDesenBtn").onclick = () => doSnapshot(true);
+$("#snapshotPlainBtn").onclick = () => {
+  const ok = confirm(
+    "⚠️ 隐私风险提示\n\n「未脱敏快照」包含明文姓名、电话、医生等个人敏感信息。\n仅可分享给可信的团队成员，切勿通过外部渠道转发。\n\n如仅需对外分享，请改用「脱敏快照」。\n\n确定生成未脱敏快照吗？"
+  );
+  if (ok) doSnapshot(false);
+};
+
+/* ============ 快照打开模式 ============ */
+function loadSnapshot(snap) {
+  hideLoading();
+  SNAP_MODE = true;
+  SNAP_BASE = (snap.rows || []).map(r => Object.assign({}, r));
+  DATA.rows = SNAP_BASE.slice();
+  CURRENT.summary = snap.summary || buildSummary(DATA.rows);
+  STORE.notes = snap.notes || {};
+  STORE.subOverrides = snap.subOverrides || {};
+  const s = snap.state || {};
+  state.advance = s.advance != null ? s.advance : 7;
+  if (s.stdCycle) state.stdCycle = s.stdCycle;
+  renderCycleInputs();
+  state.start = s.start || null; state.end = s.end || null;
+  state.q = s.q || "";
+  state.cats = new Set(s.cats || []);
+  state.subs = new Set(s.subs || []);
+  state.products = new Set(s.products || []);
+  state.hospitals = new Set(s.hospitals || []);
+  state.executors = new Set(s.executors || []);
+  state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone; state.plainDoctor = !!s.plainDoctor;
+  state.maskMode = s.maskMode || "edge";
+  if (s.hiddenCols) state.hiddenCols = new Set(s.hiddenCols);
+  // 上传区隐藏
+  ["#dropAll", "#pendingPanel"].forEach(id => $(id).classList.add("hidden"));
+  $("#snapBanner").classList.remove("hidden");
+  $("#snapBanner").textContent = snap.desen
+    ? "📄 这是一份脱敏快照：姓名、电话、医生已按所选方式脱敏，文件中不含任何明文个人信息，可安全分享。"
+    : "⚠️ 这是一份「不脱敏」快照：包含明文姓名、电话、医生等个人信息，仅可分享给可信接收方。";
+  const fb = document.querySelector(".filebar"); if (fb) fb.classList.add("hidden");
+  ["#exportDesenBtn", "#exportPlainBtn", "#snapshotDesenBtn", "#snapshotPlainBtn", "#clearAllBtn"].forEach(sl => $(sl).classList.add("hidden"));
+  ["#advanceNum", "#startDate", "#endDate", "#clearBtn"].forEach(id => $(id).disabled = true);
+  document.querySelectorAll("#cycleInputs .ci-num").forEach(inp => inp.disabled = true);
+  document.querySelectorAll(".mm-btn").forEach(b => b.disabled = true);
+  $("#dataInfo").textContent = `快照 · 生成于 ${new Date(snap.buildAt).toLocaleString("zh-CN")}`;
+  $("#board").classList.remove("hidden");
+  syncDesenBtns();
+  syncMaskModeBtns();
+  const full = buildSummary(DATA.rows);
+  renderSummary(Object.assign({}, CURRENT.summary, {
+    by_product: full.by_product, by_hospital: full.by_hospital, by_executor: full.by_executor,
+  }));
+  renderTable();
+}
+
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs };
+})();
+
+</script>
+</body>
+</html>
