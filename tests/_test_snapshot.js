@@ -28,3 +28,25 @@ console.log('lastIndexOf 取的是最大索引(文档末尾):', bodyIdx === html
 const dataScript = '<script>window.__SNAP__={}</script>';
 const finalHtml = html.slice(0, bodyIdx) + dataScript + '\n' + html.slice(bodyIdx);
 console.log('注入后字节:', finalHtml.length, '| 结尾合法:', finalHtml.trim().endsWith('</html>'));
+
+// 5. 单文件版 index.single.html：库已内联为 __vnd 标记块，剥离逻辑同样生效
+const singlePath = path.join(__dirname, '..', 'index.single.html');
+if (fs.existsSync(singlePath)) {
+  const single = fs.readFileSync(singlePath, 'utf8');
+  console.log('\n[单文件版] 存在:', singlePath);
+  console.log('  含 __vnd_xlsx__ 内联块:', single.includes('id="__vnd_xlsx__"'));
+  console.log('  含 __vnd_exceljs__ 内联块:', single.includes('id="__vnd_exceljs__"'));
+  const extLinks = (single.match(/src="vendor\/(xlsx\.full\.min|exceljs\.min)\.js"/g) || []).length;
+  console.log('  外链 vendor 残留:', extLinks, '(应为0)');
+  let s = single;
+  s = s.replace(/<script[^>]*src="vendor\/xlsx\.full\.min\.js"[^>]*><\/script>/gi, '');
+  s = s.replace(/<script[^>]*src="vendor\/exceljs\.min\.js"[^>]*><\/script>/gi, '');
+  s = s.replace(/<script id="__vnd_xlsx__"[\s\S]*?<\/script>/gi, '');
+  s = s.replace(/<script id="__vnd_exceljs__"[\s\S]*?<\/script>/gi, '');
+  const vndLeft = (s.match(/__vnd_(xlsx|exceljs)__/g) || []).length;
+  console.log('  剥离后 __vnd 残留:', vndLeft, '(应为0) | 剥离后字节:', s.length);
+  if (extLinks !== 0 || vndLeft !== 0) throw new Error('单文件版剥离验证失败');
+  console.log('  ✅ 单文件版剥离验证通过');
+} else {
+  console.log('\n[单文件版] index.single.html 不存在，跳过');
+}

@@ -1821,9 +1821,12 @@ async function doSnapshot(desen) {
       else{var ld=document.getElementById('loading');if(ld){ld.querySelector('.txt').textContent='快照加载失败：脚本未内联。请用 index.html 生成快照。';ld.classList.remove('hidden');}}
     })();<\/script>`;
     let html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
-    // 快照为只读视图，剥离外链库（xlsx / exceljs），避免 file:// 下加载失败
-    html = html.replace('<' + 'script src="vendor/xlsx.full.min.js"></sc' + 'ript>', "");
-    html = html.replace('<' + 'script src="vendor/exceljs.min.js"></sc' + 'ript>', "");
+    // 快照为只读视图，剥离库代码（兼容两种形态：外链 src 标签 / 单文件版内联 id 标记块），
+    // 避免 file:// 下加载失败或快照体积膨胀
+    html = html.replace(/<script[^>]*src="vendor\/xlsx\.full\.min\.js"[^>]*><\/script>/gi, "");
+    html = html.replace(/<script[^>]*src="vendor\/exceljs\.min\.js"[^>]*><\/script>/gi, "");
+    html = html.replace(/<script id="__vnd_xlsx__"[\s\S]*?<\/script>/gi, "");
+    html = html.replace(/<script id="__vnd_exceljs__"[\s\S]*?<\/script>/gi, "");
     const bodyIdx = html.lastIndexOf("</body>");
     html = html.slice(0, bodyIdx) + dataScript + bootstrap + "\n" + html.slice(bodyIdx);
     download(new Blob([html], { type: "text/html" }),
