@@ -483,6 +483,9 @@ function renderTable() {
     };
   });
   renderPagination(total);
+  // 表格滚动条回到顶端（不滚动页面，避免用户被带回顶部上传区）
+  const tblWrap = document.querySelector(".tbl-wrap");
+  if (tblWrap) tblWrap.scrollTop = 0;
 }
 
 function rowHtml(r, idx, inRng, cols) {
@@ -559,14 +562,27 @@ function expandHtml(r, colspan) {
 
 function renderPagination(total) {
   const pages = Math.max(1, Math.ceil(total / state.pageSize));
+  const opts = [50, 100, 200].map(n =>
+    `<option value="${n}" ${state.pageSize === n ? "selected" : ""}>${n}</option>`).join("");
   $("#pagination").innerHTML = `
-    <span>共 ${total} 条 · 每页 ${state.pageSize} 条 · 第 ${state.page}/${pages} 页</span>
-    <span class="pg-btns">
-      <button class="btn ghost sm" id="prevPg" ${state.page <= 1 ? "disabled" : ""}>‹ 上一页</button>
-      <button class="btn ghost sm" id="nextPg" ${state.page >= pages ? "disabled" : ""}>下一页 ›</button>
+    <span class="pg-info">共 ${total} 条 · 第 ${state.page}/${pages} 页</span>
+    <span class="pg-right">
+      <span class="pg-size-lbl">每页</span>
+      <select id="pageSizeSel" ${SNAP_MODE ? "disabled" : ""}>${opts}</select>
+      <span class="pg-size-lbl">条</span>
+      <span class="pg-btns">
+        <button class="btn ghost sm" id="prevPg" ${state.page <= 1 || SNAP_MODE ? "disabled" : ""}>‹ 上一页</button>
+        <button class="btn ghost sm" id="nextPg" ${state.page >= pages || SNAP_MODE ? "disabled" : ""}>下一页 ›</button>
+      </span>
     </span>`;
-  $("#prevPg").onclick = () => { if (state.page > 1) { state.page--; renderTable(); window.scrollTo({ top: 0, behavior: "smooth" }); } };
-  $("#nextPg").onclick = () => { if (state.page < pages) { state.page++; renderTable(); window.scrollTo({ top: 0, behavior: "smooth" }); } };
+  $("#pageSizeSel").onchange = e => {
+    state.pageSize = Math.max(1, parseInt(e.target.value, 10) || 50);
+    state.page = 1;
+    renderTable();
+  };
+  // 翻页只滚动表格容器回顶（不 window.scrollTo，避免整页被带回顶部上传区）
+  $("#prevPg").onclick = () => { if (state.page > 1) { state.page--; renderTable(); } };
+  $("#nextPg").onclick = () => { if (state.page < pages) { state.page++; renderTable(); } };
 }
 
 async function refresh() {
@@ -918,7 +934,7 @@ async function doSnapshot(desen) {
     const snap = {
       desen, rows, notes: STORE.notes, subOverrides: STORE.subOverrides,
       summary: CURRENT.summary, state: {
-        advance: state.advance, stdCycle: state.stdCycle,
+        advance: state.advance, stdCycle: state.stdCycle, pageSize: state.pageSize,
         start: state.start, end: state.end, q: state.q,
         cats: [...state.cats], subs: [...state.subs],
         products: [...state.products],
@@ -972,6 +988,8 @@ function loadSnapshot(snap) {
   STORE.subOverrides = snap.subOverrides || {};
   const s = snap.state || {};
   state.advance = s.advance != null ? s.advance : 7;
+  state.pageSize = s.pageSize || 50;
+  state.page = 1;
   if (s.stdCycle) state.stdCycle = s.stdCycle;
   renderCycleInputs();
   state.start = s.start || null; state.end = s.end || null;
@@ -1006,5 +1024,5 @@ function loadSnapshot(snap) {
   renderTable();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination };
 })();
