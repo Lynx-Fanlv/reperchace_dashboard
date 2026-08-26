@@ -65,11 +65,13 @@ function assert(cond, msg) {
   const total = all.length;
   console.log(`[准备] 真实数据全量行 = ${total}`);
 
-  // 构造混合状态：前 10 行→应回购(正常状态,应购日=今天)，10~19→已逾期(应购日=10天前)，其余保持未到期
+  // 构造混合状态：前 10 行→应回购(正常状态,应购日=今天)，10~19→已逾期(应购日=10天前)，其余→未到期
+  // （显式覆盖全部行状态，避免真实数据本身含 应回购/已回购 干扰筛选计数）
   const rows = all.map((r, i) => Object.assign({}, r));
   rows.forEach((r, i) => {
     if (i < 10) { r.status = '应回购'; r.substatus = '正常状态'; r.due_date = today; r.days_to_due = 3; }
     else if (i < 20) { r.status = '已逾期'; r.substatus = ''; r.due_date = addDays(today, -10); r.days_to_due = -10; }
+    else { r.status = '未到期'; r.substatus = ''; r.due_date = addDays(today, 20); r.days_to_due = 20; }
   });
   const snap = {
     desen: true, buildAt: new Date().toISOString(), notes: {}, subOverrides: {},

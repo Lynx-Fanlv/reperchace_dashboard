@@ -214,6 +214,34 @@
     border-radius:10px;padding:8px 14px;font-size:12px;margin:10px 0}
   .snap-banner.hidden{display:none}
   .snap-banner.safe{background:#e7f7f0;border-color:var(--good);color:#0b6b4a}
+  /* 整体小结面板 */
+  .summary-panel{margin-top:14px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:14px 16px}
+  .summary-panel.hidden{display:none}
+  .sp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .sp-head b{font-size:14px;color:var(--text)}
+  .sp-ctrl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .sp-group{display:inline-flex;align-items:center;gap:6px}
+  .sp-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .sp-ctrl select{font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
+  .sp-ctrl select:disabled{background:var(--gray-bg);color:var(--muted);cursor:not-allowed}
+  .sp-ctrl input[type=date]{font-size:13px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
+  .sp-ctrl input[type=date]:disabled{background:var(--gray-bg)}
+  .sp-chips{display:inline-flex;gap:6px;flex-wrap:wrap}
+  .sp-chips .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;
+    padding:3px 12px;font-size:12px;cursor:pointer;color:var(--muted)}
+  .sp-chips .chip.active{background:var(--brand);color:#fff;border-color:var(--brand);font-weight:600}
+  .sp-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;
+    line-height:1.8;color:#374151;background:var(--brand-soft);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px}
+  .sp-adjust{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .sp-adjust.hidden{display:none}
+  .sa-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .sa-item{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--line);
+    border-radius:8px;padding:3px 8px}
+  .sa-name{font-size:12px;color:var(--text)}
+  .sa-num{width:44px;font-size:12px;padding:3px 5px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text)}
+  .sa-num:disabled{background:var(--gray-bg);color:var(--muted)}
 </style>
 </head>
 <body>
@@ -261,6 +289,33 @@
       <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」下钻：正常状态 / 预判延期 / 已脱落（点标签可手动切换）</span></div>
       <div class="summary" id="summary"></div>
       <div class="subtype-bar hidden" id="substatusBar"></div>
+    </div>
+
+    <!-- 整体小结（按品种分别总结，周期可配置，原因可人工修正） -->
+    <div class="summary-panel hidden" id="summaryPanel">
+      <div class="sp-head">
+        <b>整体小结</b>
+        <span class="sp-ctrl">
+          <span class="sp-group">
+            <span class="sp-lbl">周期</span>
+            <select id="periodTypeSel">
+              <option value="7d">近7天</option>
+              <option value="week">本周</option>
+              <option value="custom">自定义</option>
+            </select>
+            <input type="date" id="periodStart" class="hidden">
+            <span id="periodSep" class="hidden">~</span>
+            <input type="date" id="periodEnd" class="hidden">
+          </span>
+          <span class="sp-group">
+            <span class="sp-lbl">品种</span>
+            <span class="sp-chips" id="summaryFamChips"></span>
+          </span>
+          <button class="btn ghost sm" id="copySummaryBtn">复制小结</button>
+        </span>
+      </div>
+      <pre class="sp-text" id="summaryText"></pre>
+      <div class="sp-adjust hidden" id="summaryAdjust"></div>
     </div>
 
     <!-- 判定配置 -->
@@ -568,11 +623,53 @@ function followupSignal(fu) {
   return { signal: parts.length ? "normal" : "unknown", reason: parts.join("；") };
 }
 
+// ---- 未购药原因细分（整体小结用，按模板顺序判定，每人不重复计数）----
+function RE_DELAY_TXT() { return /延迟|推迟|延后|未按时|过几天|晚几天|暂缓/; }
+function RE_EFFECT_TXT() { return /效果不佳|疗效不好|疗效差|没效果|无效/; }
+function RE_RECOVER_TXT() { return /自觉好转|症状好转|好转/; }
+function RE_ADR_TXT() { return /不良反应|副作用|不耐受|过敏|难受|不舒服/; }
+function RE_ECON_TXT() { return /经济|费用|太贵|负担|没钱|买不起|吃不起|贵/; }
+function RE_CHANNEL_TXT() { return /转渠道|转院|转店|换店|其他药房|异地|外地|其他医院/; }
+function RE_FUFAIL_TXT() { return /随访失败|联系不上|拒访|拒绝随访|无法联系|关机|无人接听/; }
+function RE_PROLONG_TXT() { return /医嘱延长|遵医嘱延长|医生建议延长|延长用药|延长疗程/; }
+function RE_SWITCH_TXT() { return /换药|换品种|更换药品|换用|改用|换成/; }
+// 脱落判定专用（排除「转渠道/转院」，避免与③转渠道冲突）
+function RE_DROPOUT_ONLY() { return /停药|停用|脱落|失访|去世|拒绝随访|不再治疗|放弃治疗|不治疗/; }
+
+// 返回 { key: 'delay'|'dropout'|'channel'|'fuFail'|'prolong'|'switch'|null, detail: ''|'效果不佳'|'自觉好转'|'不良反应'|'经济'|'其他' }
+function classifyFuReason(fu) {
+  if (!fu) return null;
+  const note = [fu.follow_note, fu.delay_reason, fu.stop_reason, fu.dropout_reason].filter(Boolean).join(" ");
+  const ts = fu.task_status || "";
+  // ① 延迟用药
+  if (fu.delay_reason || RE_DELAY_TXT().test(note)) return { key: "delay", detail: "" };
+  // ② 脱落（细分：效果不佳/自觉好转/不良反应/经济/其他）
+  if (fu.stop_reason || (fu.is_dropout && /^(是|有)/.test(fu.is_dropout)) || RE_DROPOUT_ONLY().test(note)) {
+    let d = "其他";
+    if (RE_EFFECT_TXT().test(note)) d = "效果不佳";
+    else if (RE_RECOVER_TXT().test(note)) d = "自觉好转";
+    else if (RE_ADR_TXT().test(note)) d = "不良反应";
+    else if (RE_ECON_TXT().test(note)) d = "经济";
+    return { key: "dropout", detail: d };
+  }
+  // ③ 转渠道
+  if (RE_CHANNEL_TXT().test(note)) return { key: "channel", detail: "" };
+  // ④ 随访失败未探寻原因
+  if (RE_FUFAIL_TXT().test(note) || (/执行失败|超期未完成/.test(ts) && /随访|购药/.test(fu.summary_type || ""))) {
+    return { key: "fuFail", detail: "" };
+  }
+  // ⑤ 医嘱延长
+  if (RE_PROLONG_TXT().test(note)) return { key: "prolong", detail: "" };
+  // ⑥ 换药
+  if (RE_SWITCH_TXT().test(note)) return { key: "switch", detail: "" };
+  return null;
+}
+
 if (typeof window !== "undefined") {
   window.Mapping = {
     PRODUCT_FAMILIES, normalizeProduct, CATEGORIES, SUBSTATUS,
     TABLE_SIGNATURES, detectTableType, normHeader, _cell, _gtext,
-    isPlaceholder, followupSignal, KEYWORD_RULES, KEYWORD_RULES_MULTI,
+    isPlaceholder, followupSignal, classifyFuReason, KEYWORD_RULES, KEYWORD_RULES_MULTI,
   };
 }
 })();
@@ -982,7 +1079,13 @@ const state = {
   maskMode: "edge",   // 姓名/医生脱敏方式：edge=首尾保留、first=首字保留、all=全部隐藏
   hiddenCols: new Set(),
   page: 1, pageSize: 50,
+  // 整体小结：周期（7d=近7天/week=本周/custom=自定义）+ 选中品种 + 未购药原因人工修正
+  periodType: "7d", periodStart: "", periodEnd: "",
+  selFam: "",
+  fuAdj: {},   // { [fam]: { delay: n, dropout_effect: n, dropout_recover: n, dropout_adr: n, dropout_econ: n, dropout_other: n, channel: n, fuFail: n, prolong: n, switch: n } } 仅存用户改过的值
 };
+let SUMMARY = { text: "" }; // 当前整体小结文本（快照保存用）
+let ALL_ROWS = [];          // 全量计算行（小结统计用，不随筛选变化）
 let DATA = { rows: [] };
 let CURRENT = { summary: null };
 
@@ -1512,9 +1615,198 @@ function renderPagination(total) {
   $("#nextPg").onclick = () => { if (state.page < pages) { state.page++; renderTable(); } };
 }
 
+/* ============ 整体小结（按品种分别总结；周期可配置） ============ */
+// 当前周期范围（7d=滚动近7天 / week=本周一至今 / custom=自定义）
+function getPeriodRange() {
+  const today = todayStr();
+  if (state.periodType === "custom" && state.periodStart && state.periodEnd) {
+    return { start: state.periodStart, end: state.periodEnd };
+  }
+  if (state.periodType === "week") {
+    const dow = (new Date().getDay() + 6) % 7; // 周一=0
+    return { start: addDays(today, -dow), end: today };
+  }
+  return { start: addDays(today, -7), end: today }; // 近7天（滚动）
+}
+
+const REASON_KEYS = ["delay", "dropout_effect", "dropout_recover", "dropout_adr", "dropout_econ", "dropout_other", "channel", "fuFail", "prolong", "switch"];
+const REASON_LABEL = {
+  delay: "延迟用药", dropout_effect: "脱落·效果不佳", dropout_recover: "脱落·自觉好转",
+  dropout_adr: "脱落·不良反应", dropout_econ: "脱落·经济", dropout_other: "脱落·其他",
+  channel: "转渠道", fuFail: "随访失败未探寻原因", prolong: "医嘱延长", switch: "换药",
+};
+
+// 计算某品种在所选周期的小结统计
+// 口径：应购药 = 任一次购药记录 + 周期 的应购日落在周期内（含已购药完成的轮次）；
+//       实际购药 = 周期内有购药记录的患者；未购药 = 应购药中周期内未购药者。
+//       下周预计 = 全量行的下次应购日落在下一周期（按随访信号分正常/推迟）。
+function buildSummaryStats(fam) {
+  const { start, end } = getPeriodRange();
+  const nStart = addDays(end, 1), nEnd = addDays(end, 7); // 下周 = 结束次日 + 7 天
+  const inP = (d, s, e) => d && d >= s && d <= e;
+  // 按患者×品种聚合购药日期（从销售明细，不依赖行 due_date 的顺延）
+  const pat = {}; // key -> { name, phone, dates: [] }
+  for (const s of STORE.sales) {
+    if (s.product !== fam || !s.sales_time) continue;
+    const k = phoneDigits(s.phone) || s.patient_name || "";
+    if (!k) continue;
+    (pat[k] = pat[k] || { name: s.patient_name || "", phone: s.phone || "", dates: [] }).dates.push(s.sales_time);
+  }
+  const cycleOf = p => STORE.cycles[p.name || p.phone] || state.stdCycle[fam] || 30;
+  const dueKeys = new Set();    // 本周应购患者
+  const boughtKeys = new Set(); // 本周实际购药患者
+  const notBoughtKeys = [];     // 应购未购
+  for (const k in pat) {
+    const p = pat[k];
+    p.dates.sort();
+    const cyc = cycleOf(p);
+    const boughtThisWeek = p.dates.some(d => inP(d, start, end));
+    if (boughtThisWeek) boughtKeys.add(k);
+    const dueThisWeek = p.dates.some(d => inP(addDays(d, cyc), start, end));
+    if (dueThisWeek) {
+      dueKeys.add(k);
+      if (!boughtThisWeek) notBoughtKeys.push(k);
+    }
+  }
+  // 未购药原因：用全量行的最近随访自动判定
+  const rowMap = {};
+  for (const r of ALL_ROWS) rowMap[r._key + "|" + r.product] = r;
+  const cnt = Object.fromEntries(REASON_KEYS.map(k => [k, 0]));
+  for (const k of notBoughtKeys) {
+    const r = rowMap[k + "|" + fam];
+    const c = M.classifyFuReason(r && r._matched);
+    if (c && c.key === "dropout") cnt["dropout_" + (c.detail === "效果不佳" ? "effect" : c.detail === "自觉好转" ? "recover" : c.detail === "不良反应" ? "adr" : c.detail === "经济" ? "econ" : "other")]++;
+    else if (c && cnt[c.key] != null) cnt[c.key]++;
+  }
+  // 下周预计复购：应购日落在下周的患者，按随访信号分正常/推迟（脱落不计入复购）
+  const nextRows = ALL_ROWS.filter(r => r.product === fam && r.status !== "已回购" && inP(r.due_date, nStart, nEnd));
+  let normal = 0, postpone = 0;
+  const postponeReasons = new Set();
+  for (const r of nextRows) {
+    const sig = r._matched ? M.followupSignal(r._matched) : { signal: "unknown", reason: "" };
+    if (sig.signal === "nonstd") {
+      postpone++;
+      const dr = (r._matched && r._matched.delay_reason) || "";
+      if (dr) postponeReasons.add(String(dr).slice(0, 30));
+    } else if (sig.signal !== "dropout") {
+      normal++;
+    }
+  }
+  const dTotal = cnt.dropout_effect + cnt.dropout_recover + cnt.dropout_adr + cnt.dropout_econ + cnt.dropout_other;
+  return { start, end, nStart, nEnd, due: dueKeys.size, bought: boughtKeys.size, notBought: notBoughtKeys.length,
+    cnt, dTotal, nextTotal: nextRows.length, normal, postpone, postponeReasons: [...postponeReasons] };
+}
+
+// 生成小结文案（原因人数优先取用户人工修正值）
+function buildSummaryText(fam) {
+  const st = buildSummaryStats(fam);
+  const adj = state.fuAdj[fam] || {};
+  const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
+  const dEff = v("dropout_effect", st.cnt.dropout_effect);
+  const dRec = v("dropout_recover", st.cnt.dropout_recover);
+  const dAdr = v("dropout_adr", st.cnt.dropout_adr);
+  const dEco = v("dropout_econ", st.cnt.dropout_econ);
+  const dOth = v("dropout_other", st.cnt.dropout_other);
+  const dTot = dEff + dRec + dAdr + dEco + dOth;
+  const lines = [];
+  lines.push(`本周小结（${fam}）：`);
+  lines.push(`1. 本周老患者应购药 ${st.due} 人，实际购药 ${st.bought} 人，未购药 ${st.notBought} 人；`);
+  lines.push(`2. 未购药原因：①延迟用药${v("delay", st.cnt.delay)}人、②脱落${dTot}人（效果不佳${dEff}/自觉好转${dRec}/不良反应${dAdr}/经济${dEco}/其他${dOth}）、③转渠道${v("channel", st.cnt.channel)}人、④随访失败未探寻原因${v("fuFail", st.cnt.fuFail)}人、⑤医嘱延长${v("prolong", st.cnt.prolong)}人、⑥换药${v("switch", st.cnt.switch)}人；`);
+  const pReasons = st.postponeReasons.length ? `（${st.postponeReasons.slice(0, 5).join("、")}）` : "";
+  lines.push(`4. 下周预计复购 ${st.normal + st.postpone} 人，预计正常回购 ${st.normal} 人，推迟 ${st.postpone} 人${pReasons}`);
+  SUMMARY.text = lines.join("\n");
+  return { text: SUMMARY.text, st };
+}
+
+// 渲染整体小结面板（周期/品种/文案/原因修正/复制）
+function renderSummaryPanel() {
+  const panel = $("#summaryPanel");
+  if (!panel) return;
+  // 快照模式：只读展示保存的小结文本（快照行不含随访对象，不重算）
+  if (SNAP_MODE) {
+    panel.classList.remove("hidden");
+    $("#summaryText").textContent = SUMMARY.text || "（快照未包含小结文本）";
+    $("#summaryFamChips").innerHTML = "";
+    $("#summaryAdjust").innerHTML = "";
+    ["#periodTypeSel", "#periodStart", "#periodEnd"].forEach(id => $(id).disabled = true);
+    $("#copySummaryBtn").classList.add("hidden");
+    return;
+  }
+  const fams = [...new Set(ALL_ROWS.map(r => r.product).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh"));
+  if (!fams.length) { panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden");
+  if (!fams.includes(state.selFam)) state.selFam = fams[0];
+  // 品种 chips
+  $("#summaryFamChips").innerHTML = fams.map(f =>
+    `<span class="chip ${f === state.selFam ? "active" : ""}" data-fam="${esc(f)}">${esc(f)}</span>`).join("");
+  document.querySelectorAll("#summaryFamChips .chip").forEach(ch => {
+    ch.onclick = () => { state.selFam = ch.dataset.fam; renderSummaryPanel(); };
+  });
+  // 周期控件状态
+  $("#periodTypeSel").value = state.periodType;
+  const isCustom = state.periodType === "custom";
+  $("#periodStart").classList.toggle("hidden", !isCustom);
+  $("#periodSep").classList.toggle("hidden", !isCustom);
+  $("#periodEnd").classList.toggle("hidden", !isCustom);
+  if (state.periodType !== "custom") {
+    const { start, end } = getPeriodRange();
+    $("#periodStart").value = start; $("#periodEnd").value = end;
+  } else {
+    $("#periodStart").value = state.periodStart; $("#periodEnd").value = state.periodEnd;
+  }
+  // 文案 + 原因修正输入
+  const { text, st } = buildSummaryText(state.selFam);
+  $("#summaryText").textContent = text;
+  const adj = state.fuAdj[state.selFam] || {};
+  const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
+  $("#summaryAdjust").innerHTML =
+    `<span class="sa-lbl">未购药原因（自动判定，可修改）：</span>` +
+    REASON_KEYS.map(k =>
+      `<span class="sa-item" data-k="${k}"><span class="sa-name">${REASON_LABEL[k]}</span>` +
+      `<input type="number" class="sa-num" min="0" value="${v(k, st.cnt[k] || 0)}"></span>`).join("");
+  document.querySelectorAll("#summaryAdjust .sa-num").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const item = inp.closest(".sa-item");
+      if (!item) return;
+      const k = item.dataset.k;
+      const n = Math.max(0, parseInt(inp.value, 10) || 0);
+      (state.fuAdj[state.selFam] = state.fuAdj[state.selFam] || {})[k] = n;
+      renderSummaryPanel();
+    });
+    if (SNAP_MODE) inp.disabled = true;
+  });
+  $("#summaryAdjust").classList.toggle("hidden", SNAP_MODE);
+  // 复制
+  const copyBtn = $("#copySummaryBtn");
+  if (SNAP_MODE) copyBtn.classList.add("hidden");
+  else copyBtn.classList.remove("hidden");
+  copyBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(SUMMARY.text);
+      copyBtn.textContent = "已复制 ✓";
+      setTimeout(() => { copyBtn.textContent = "复制小结"; }, 1500);
+    } catch (e) {
+      prompt("复制失败，请手动复制以下内容：", SUMMARY.text);
+    }
+  };
+  // 周期控件绑定
+  $("#periodTypeSel").onchange = e => {
+    state.periodType = e.target.value;
+    if (state.periodType === "custom" && !state.periodStart) {
+      const { start, end } = getPeriodRange();
+      state.periodStart = start; state.periodEnd = end;
+    }
+    renderSummaryPanel();
+  };
+  $("#periodStart").onchange = e => { state.periodStart = e.target.value; renderSummaryPanel(); };
+  $("#periodEnd").onchange = e => { state.periodEnd = e.target.value; renderSummaryPanel(); };
+  ["#periodTypeSel", "#periodStart", "#periodEnd"].forEach(id => { if (SNAP_MODE) $(id).disabled = true; });
+}
+
 async function refresh() {
   // 快照模式：数据已内嵌在快照行中（STORE 为空），基于不可变的 SNAP_BASE 筛选，不重建、不累积丢失
   const all = SNAP_MODE ? (SNAP_BASE || DATA.rows) : buildRows();
+  ALL_ROWS = all;
   CURRENT.summary = buildSummary(all);
   DATA.rows = filterRows(all);
   // 多选面板用「全量」计数（不随筛选遮蔽）
@@ -1524,6 +1816,7 @@ async function refresh() {
     by_product: full.by_product, by_hospital: full.by_hospital, by_executor: full.by_executor,
   }));
   renderTable();
+  renderSummaryPanel();
 }
 
 /* ============ 上传 / 分析（统一上传 → 列表确认/删除 → 开始分析后保留） ============ */
@@ -1869,7 +2162,10 @@ async function doSnapshot(desen) {
         plainName: state.plainName, plainPhone: state.plainPhone, plainDoctor: state.plainDoctor,
         maskMode: state.maskMode,
         hiddenCols: [...state.hiddenCols],
+        periodType: state.periodType, periodStart: state.periodStart, periodEnd: state.periodEnd,
+        selFam: state.selFam, fuAdj: state.fuAdj,
       },
+      summaryText: SUMMARY.text,
       buildAt: new Date().toISOString(),
       note: "预计购药分析快照",
     };
@@ -1929,6 +2225,12 @@ function loadSnapshot(snap) {
   state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone; state.plainDoctor = !!s.plainDoctor;
   state.maskMode = s.maskMode || "edge";
   if (s.hiddenCols) state.hiddenCols = new Set(s.hiddenCols);
+  // 整体小结状态恢复（快照中只读展示保存的小结文本）
+  state.periodType = s.periodType || "7d";
+  state.periodStart = s.periodStart || ""; state.periodEnd = s.periodEnd || "";
+  state.selFam = s.selFam || "";
+  state.fuAdj = s.fuAdj || {};
+  SUMMARY.text = snap.summaryText || "";
   // 上传区隐藏
   ["#dropAll", "#pendingPanel"].forEach(id => $(id).classList.add("hidden"));
   $("#snapBanner").classList.remove("hidden");
@@ -1949,9 +2251,11 @@ function loadSnapshot(snap) {
     by_product: full.by_product, by_hospital: full.by_hospital, by_executor: full.by_executor,
   }));
   renderTable();
+  // 快照模式：小结只读展示保存的文本（渲染面板会自动隐藏控制/修正区）
+  renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, getPeriodRange, buildSummaryStats, buildSummaryText, renderSummaryPanel, classifyFuReason: M.classifyFuReason };
 })();
 
 </script>

@@ -214,6 +214,34 @@
     border-radius:10px;padding:8px 14px;font-size:12px;margin:10px 0}
   .snap-banner.hidden{display:none}
   .snap-banner.safe{background:#e7f7f0;border-color:var(--good);color:#0b6b4a}
+  /* 整体小结面板 */
+  .summary-panel{margin-top:14px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:14px 16px}
+  .summary-panel.hidden{display:none}
+  .sp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .sp-head b{font-size:14px;color:var(--text)}
+  .sp-ctrl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .sp-group{display:inline-flex;align-items:center;gap:6px}
+  .sp-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .sp-ctrl select{font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
+  .sp-ctrl select:disabled{background:var(--gray-bg);color:var(--muted);cursor:not-allowed}
+  .sp-ctrl input[type=date]{font-size:13px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
+  .sp-ctrl input[type=date]:disabled{background:var(--gray-bg)}
+  .sp-chips{display:inline-flex;gap:6px;flex-wrap:wrap}
+  .sp-chips .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;
+    padding:3px 12px;font-size:12px;cursor:pointer;color:var(--muted)}
+  .sp-chips .chip.active{background:var(--brand);color:#fff;border-color:var(--brand);font-weight:600}
+  .sp-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;
+    line-height:1.8;color:#374151;background:var(--brand-soft);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px}
+  .sp-adjust{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .sp-adjust.hidden{display:none}
+  .sa-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .sa-item{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--line);
+    border-radius:8px;padding:3px 8px}
+  .sa-name{font-size:12px;color:var(--text)}
+  .sa-num{width:44px;font-size:12px;padding:3px 5px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text)}
+  .sa-num:disabled{background:var(--gray-bg);color:var(--muted)}
 </style>
 </head>
 <body>
@@ -261,6 +289,33 @@
       <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」下钻：正常状态 / 预判延期 / 已脱落（点标签可手动切换）</span></div>
       <div class="summary" id="summary"></div>
       <div class="subtype-bar hidden" id="substatusBar"></div>
+    </div>
+
+    <!-- 整体小结（按品种分别总结，周期可配置，原因可人工修正） -->
+    <div class="summary-panel hidden" id="summaryPanel">
+      <div class="sp-head">
+        <b>整体小结</b>
+        <span class="sp-ctrl">
+          <span class="sp-group">
+            <span class="sp-lbl">周期</span>
+            <select id="periodTypeSel">
+              <option value="7d">近7天</option>
+              <option value="week">本周</option>
+              <option value="custom">自定义</option>
+            </select>
+            <input type="date" id="periodStart" class="hidden">
+            <span id="periodSep" class="hidden">~</span>
+            <input type="date" id="periodEnd" class="hidden">
+          </span>
+          <span class="sp-group">
+            <span class="sp-lbl">品种</span>
+            <span class="sp-chips" id="summaryFamChips"></span>
+          </span>
+          <button class="btn ghost sm" id="copySummaryBtn">复制小结</button>
+        </span>
+      </div>
+      <pre class="sp-text" id="summaryText"></pre>
+      <div class="sp-adjust hidden" id="summaryAdjust"></div>
     </div>
 
     <!-- 判定配置 -->
