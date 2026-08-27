@@ -320,8 +320,8 @@
 
     <!-- 判定配置 -->
     <div class="configbar">
-      <span class="cfg-label">应回购 = 应购药日前</span>
-      <input type="number" id="advanceNum" value="7" min="0" max="90"> <span class="cfg-label">天内（优先于「已回购」）</span>
+      <span class="cfg-label">近期窗口</span>
+      <input type="number" id="advanceNum" value="7" min="0" max="90"> <span class="cfg-label">天：应购药日在此范围内 → 应回购；最近 N 天内已购药 → 已回购</span>
       <span class="cfg-sep"></span>
       <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改）</span>
       <span class="cycle-inputs" id="cycleInputs"></span>
@@ -1283,17 +1283,12 @@ function buildRows() {
       bp.dates.sort();
       const lastPurchase = bp.dates[bp.dates.length - 1];
       const cycle = cycles[p.name] || state.stdCycle[fam] || 30;
-      // 已回购判定（新口径）：最近一次购药日期落在「当前已回购窗口」内
-      //  未选日期范围 → 距今 ≤ advance 天；选了日期范围 → 落在所选范围内
+      // 已回购判定（统一「近期窗口 N 天」）：最近一次购药日期距今 ≤ N 天
+      // N = state.advance，与「应回购 = 应购日前 N 天内」共用同一近期标尺；
+      // 不再受应购药日期筛选范围影响（筛选范围仅负责按日期裁剪名单）
       // 应购药日期列显示「预判应购日」= 倒数第二次购药日 + 周期（≥2条记录时），
       // 用于对比实际购药是提前还是延后（需求：已回购行不呈现下次应购时间）
-      const inRepurchaseWindow = (() => {
-        if (state.start || state.end) {
-          return (!state.start || lastPurchase >= state.start) && (!state.end || lastPurchase <= state.end);
-        }
-        const lo = addDays(today, -state.advance);
-        return lastPurchase >= lo && lastPurchase <= today;
-      })();
+      const inRepurchaseWindow = lastPurchase >= addDays(today, -state.advance) && lastPurchase <= today;
       let expectedDue = null, dueOffset = null;
       if (bp.dates.length >= 2) {
         expectedDue = addDays(bp.dates[bp.dates.length - 2], cycle);
