@@ -122,22 +122,22 @@ function assert(cond, msg) {
   assert(r.status === '未到期', '场景9 购药10天前(窗口外)+30天→未到期');
 
   console.log('\n===== 已回购 × 时间窗 =====');
-  // 场景10：选了日期范围（覆盖最近购药日）→ 已回购按所选范围判定
-  App.state.start = daysAgo(2); App.state.end = daysAgo(0);
-  r = run([
-    sales('癸', '10000000010', daysAgo(23), '百泽安'),
-    sales('癸', '10000000010', daysAgo(1), '百泽安'),
-  ], [], {});
-  assert(r.status === '已回购', '场景10a 最近购药落在所选范围→已回购');
-  // filterRows：已回购行按「最近购药日期」匹配范围，应保留
+  // 场景10：时间窗不再参与已回购判定（统一「近期窗口 N 天」）
+  App.state.start = daysAgo(10); App.state.end = daysAgo(8); // 范围不含最近购药日
+  r = run([sales('癸', '10000000010', daysAgo(1), '百泽安')], [], {});
+  assert(r.status === '已回购', '场景10a 选时间窗不改变已回购判定（购药1天前≤N仍已回购）');
+  // filterRows：已回购行按「最近购药日期」匹配范围 → 1天前不在 [10天前,8天前] → 被裁
   const kept = App.filterRows([r]);
-  assert(kept.length === 1, '场景10b 已回购行按最近购药日通过时间窗筛选');
-  // 未到期行按「下次应购日」匹配：最近购药10天前、下次应购20天后，不在 [2天前,今天] → 被裁
+  assert(kept.length === 0, '场景10b 已回购行按最近购药日被时间窗裁掉');
+  // 范围覆盖最近购药日 → 保留
   App.state.start = daysAgo(2); App.state.end = daysAgo(0);
+  const kept2 = App.filterRows([r]);
+  assert(kept2.length === 1, '场景10c 已回购行最近购药在范围内→保留');
+  // 未到期行按「下次应购日」匹配：最近购药10天前、下次应购20天后，不在 [2天前,今天] → 被裁
   const nr = run([sales('子', '10000000011', daysAgo(10), '百泽安')], [], { "子": 30 });
-  assert(nr.status === '未到期', '场景10c 未到期行（购药10天前窗口外）');
-  const kept2 = App.filterRows([nr]);
-  assert(kept2.length === 0, '场景10d 未到期行按下次应购日被时间窗裁掉');
+  assert(nr.status === '未到期', '场景10d 未到期行（购药10天前窗口外）');
+  const kept3 = App.filterRows([nr]);
+  assert(kept3.length === 0, '场景10e 未到期行按下次应购日被时间窗裁掉');
   App.state.start = null; App.state.end = null;
 
   console.log('\n===== 用户手动 override 子状态 =====');

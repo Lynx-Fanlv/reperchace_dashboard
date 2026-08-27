@@ -187,17 +187,12 @@ function buildRows() {
       bp.dates.sort();
       const lastPurchase = bp.dates[bp.dates.length - 1];
       const cycle = cycles[p.name] || state.stdCycle[fam] || 30;
-      // 已回购判定（新口径）：最近一次购药日期落在「当前已回购窗口」内
-      //  未选日期范围 → 距今 ≤ advance 天；选了日期范围 → 落在所选范围内
+      // 已回购判定（统一「近期窗口 N 天」）：最近一次购药日期距今 ≤ N 天
+      // N = state.advance，与「应回购 = 应购日前 N 天内」共用同一近期标尺；
+      // 不再受应购药日期筛选范围影响（筛选范围仅负责按日期裁剪名单）
       // 应购药日期列显示「预判应购日」= 倒数第二次购药日 + 周期（≥2条记录时），
       // 用于对比实际购药是提前还是延后（需求：已回购行不呈现下次应购时间）
-      const inRepurchaseWindow = (() => {
-        if (state.start || state.end) {
-          return (!state.start || lastPurchase >= state.start) && (!state.end || lastPurchase <= state.end);
-        }
-        const lo = addDays(today, -state.advance);
-        return lastPurchase >= lo && lastPurchase <= today;
-      })();
+      const inRepurchaseWindow = lastPurchase >= addDays(today, -state.advance) && lastPurchase <= today;
       let expectedDue = null, dueOffset = null;
       if (bp.dates.length >= 2) {
         expectedDue = addDays(bp.dates[bp.dates.length - 2], cycle);

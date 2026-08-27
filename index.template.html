@@ -320,8 +320,8 @@
 
     <!-- 判定配置 -->
     <div class="configbar">
-      <span class="cfg-label">应回购 = 应购药日前</span>
-      <input type="number" id="advanceNum" value="7" min="0" max="90"> <span class="cfg-label">天内（优先于「已回购」）</span>
+      <span class="cfg-label">近期窗口</span>
+      <input type="number" id="advanceNum" value="7" min="0" max="90"> <span class="cfg-label">天：应购药日在此范围内 → 应回购；最近 N 天内已购药 → 已回购</span>
       <span class="cfg-sep"></span>
       <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改）</span>
       <span class="cycle-inputs" id="cycleInputs"></span>
