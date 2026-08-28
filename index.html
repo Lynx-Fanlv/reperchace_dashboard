@@ -241,6 +241,7 @@
   .sp-ctrl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .sp-group{display:inline-flex;align-items:center;gap:6px}
   .sp-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .sp-fixed{font-size:13px;font-weight:600;color:var(--brand);padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--brand-soft)}
   .sp-ctrl select{font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
   .sp-ctrl select:disabled{background:var(--gray-bg);color:var(--muted);cursor:not-allowed}
   .sp-ctrl input[type=date]{font-size:13px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
@@ -309,21 +310,14 @@
       <div class="subtype-bar hidden" id="substatusBar"></div>
     </div>
 
-    <!-- 整体小结（按品种分别总结，周期可配置，原因可人工修正） -->
+    <!-- 整体小结（按品种分别总结，固定统计「本周」，原因可人工修正） -->
     <div class="summary-panel hidden" id="summaryPanel">
       <div class="sp-head">
         <b>整体小结</b>
         <span class="sp-ctrl">
           <span class="sp-group">
             <span class="sp-lbl">周期</span>
-            <select id="periodTypeSel">
-              <option value="7d">近7天</option>
-              <option value="week">本周</option>
-              <option value="custom">自定义</option>
-            </select>
-            <input type="date" id="periodStart" class="hidden">
-            <span id="periodSep" class="hidden">~</span>
-            <input type="date" id="periodEnd" class="hidden">
+            <span class="sp-fixed" id="periodFixedLabel">本周</span>
           </span>
           <span class="sp-group">
             <span class="sp-lbl">品种</span>
@@ -1624,21 +1618,7 @@ function renderPagination(total) {
   $("#nextPg").onclick = () => { if (state.page < pages) { state.page++; renderTable(); } };
 }
 
-/* ============ 整体小结（按品种分别总结；周期可配置） ============ */
-// 当前周期范围（7d=滚动近7天 / week=本周一至今 / custom=自定义）
-// 「本周」以参考日期（refDate，默认今天）所在自然周为基准
-function getPeriodRange() {
-  const today = refToday();
-  if (state.periodType === "custom" && state.periodStart && state.periodEnd) {
-    return { start: state.periodStart, end: state.periodEnd };
-  }
-  if (state.periodType === "week") {
-    const dow = (new Date(today + "T00:00:00").getDay() + 6) % 7; // 周一=0
-    return { start: addDays(today, -dow), end: today };
-  }
-  return { start: addDays(today, -7), end: today }; // 近7天（滚动）
-}
-
+/* ============ 整体小结（按品种分别总结；固定统计「本周」） ============ */
 const REASON_KEYS = ["delay", "dropout_effect", "dropout_recover", "dropout_adr", "dropout_econ", "dropout_other", "channel", "fuFail", "prolong", "switch"];
 const REASON_LABEL = {
   delay: "延迟用药", dropout_effect: "脱落·效果不佳", dropout_recover: "脱落·自觉好转",
@@ -1646,15 +1626,18 @@ const REASON_LABEL = {
   channel: "转渠道", fuFail: "随访失败未探寻原因", prolong: "医嘱延长", switch: "换药",
 };
 
-// 计算某品种在所选周期的小结统计
-// 口径：应购药 = 任一次购药记录 + 周期 的应购日落在周期内（含已购药完成的轮次）；
-//       实际购药 = 周期内有购药记录的患者；未购药 = 应购药中周期内未购药者。
-//       下周预计 = 全量行的下次应购日落在下一周期（按随访信号分正常/推迟）。
+// 计算某品种的「本周」小结统计（固定按本周，口径与周维度状态机完全一致）
+//   本周 = 参考日期所在自然周（周一~周日完整周，与状态机「本周」相同）
+//   应购药 = 下次应购日（最近购药 + 周期）∈ 本周（= 状态机「应回购」+ 应购日∈本周的「已回购」）
+//   实际购药 = 当周有购药记录（= 状态机「已回购」，含提前购药者）
+//   未购药 = 应购日∈本周 且 当周未购药（= 状态机「应回购」）
+//   下周预计 = 下次应购日 ∈ 下周（下个自然周）的患者，按随访信号分正常/推迟（脱落不计复购）
+// 固定本周：不受小结周期控件（近7天/自定义）影响
 function buildSummaryStats(fam) {
-  const { start, end } = getPeriodRange();
-  const nStart = addDays(end, 1), nEnd = addDays(end, 7); // 下周 = 结束次日 + 7 天
+  const W = getWeekRange("this");
+  const nStart = addDays(W.end, 1), nEnd = addDays(W.end, 7); // 下周 = 下个自然周
   const inP = (d, s, e) => d && d >= s && d <= e;
-  // 按患者×品种聚合购药日期（从销售明细，不依赖行 due_date 的顺延）
+  // 按患者×品种聚合购药日期（从销售明细，与状态机同一数据源）
   const pat = {}; // key -> { name, phone, dates: [] }
   for (const s of STORE.sales) {
     if (s.product !== fam || !s.sales_time) continue;
@@ -1663,20 +1646,22 @@ function buildSummaryStats(fam) {
     (pat[k] = pat[k] || { name: s.patient_name || "", phone: s.phone || "", dates: [] }).dates.push(s.sales_time);
   }
   const cycleOf = p => STORE.cycles[p.name || p.phone] || state.stdCycle[fam] || 30;
-  const dueKeys = new Set();    // 本周应购患者
-  const boughtKeys = new Set(); // 本周实际购药患者
+  const dueKeys = new Set();    // 本周应购（下次应购日∈本周）
+  const boughtKeys = new Set(); // 本周实际购药（当周有购药记录）
   const notBoughtKeys = [];     // 应购未购
+  const nextKeys = [];          // 下周应购（下次应购日∈下周）
   for (const k in pat) {
     const p = pat[k];
     p.dates.sort();
     const cyc = cycleOf(p);
-    const boughtThisWeek = p.dates.some(d => inP(d, start, end));
+    const nextDue = addDays(p.dates[p.dates.length - 1], cyc);
+    const boughtThisWeek = p.dates.some(d => inP(d, W.start, W.end));
     if (boughtThisWeek) boughtKeys.add(k);
-    const dueThisWeek = p.dates.some(d => inP(addDays(d, cyc), start, end));
-    if (dueThisWeek) {
+    if (inP(nextDue, W.start, W.end)) {
       dueKeys.add(k);
       if (!boughtThisWeek) notBoughtKeys.push(k);
     }
+    if (inP(nextDue, nStart, nEnd)) nextKeys.push(k);
   }
   // 未购药原因：用全量行的最近随访自动判定
   const rowMap = {};
@@ -1688,23 +1673,23 @@ function buildSummaryStats(fam) {
     if (c && c.key === "dropout") cnt["dropout_" + (c.detail === "效果不佳" ? "effect" : c.detail === "自觉好转" ? "recover" : c.detail === "不良反应" ? "adr" : c.detail === "经济" ? "econ" : "other")]++;
     else if (c && cnt[c.key] != null) cnt[c.key]++;
   }
-  // 下周预计复购：应购日落在下周的患者，按随访信号分正常/推迟（脱落不计入复购）
-  const nextRows = ALL_ROWS.filter(r => r.product === fam && r.status !== "已回购" && inP(r.due_date, nStart, nEnd));
+  // 下周预计复购：按随访信号分正常/推迟（脱落不计入复购）
   let normal = 0, postpone = 0;
   const postponeReasons = new Set();
-  for (const r of nextRows) {
-    const sig = r._matched ? M.followupSignal(r._matched) : { signal: "unknown", reason: "" };
+  for (const k of nextKeys) {
+    const r = rowMap[k + "|" + fam];
+    const sig = r && r._matched ? M.followupSignal(r._matched) : { signal: "unknown", reason: "" };
     if (sig.signal === "nonstd") {
       postpone++;
-      const dr = (r._matched && r._matched.delay_reason) || "";
+      const dr = (r && r._matched && r._matched.delay_reason) || "";
       if (dr) postponeReasons.add(String(dr).slice(0, 30));
     } else if (sig.signal !== "dropout") {
       normal++;
     }
   }
   const dTotal = cnt.dropout_effect + cnt.dropout_recover + cnt.dropout_adr + cnt.dropout_econ + cnt.dropout_other;
-  return { start, end, nStart, nEnd, due: dueKeys.size, bought: boughtKeys.size, notBought: notBoughtKeys.length,
-    cnt, dTotal, nextTotal: nextRows.length, normal, postpone, postponeReasons: [...postponeReasons] };
+  return { start: W.start, end: W.end, nStart, nEnd, due: dueKeys.size, bought: boughtKeys.size, notBought: notBoughtKeys.length,
+    cnt, dTotal, nextTotal: nextKeys.length, normal, postpone, postponeReasons: [...postponeReasons] };
 }
 
 // 生成小结文案（原因人数优先取用户人工修正值）
@@ -1738,7 +1723,6 @@ function renderSummaryPanel() {
     $("#summaryText").textContent = SUMMARY.text || "（快照未包含小结文本）";
     $("#summaryFamChips").innerHTML = "";
     $("#summaryAdjust").innerHTML = "";
-    ["#periodTypeSel", "#periodStart", "#periodEnd"].forEach(id => $(id).disabled = true);
     $("#copySummaryBtn").classList.add("hidden");
     return;
   }
@@ -1752,18 +1736,9 @@ function renderSummaryPanel() {
   document.querySelectorAll("#summaryFamChips .chip").forEach(ch => {
     ch.onclick = () => { state.selFam = ch.dataset.fam; renderSummaryPanel(); };
   });
-  // 周期控件状态
-  $("#periodTypeSel").value = state.periodType;
-  const isCustom = state.periodType === "custom";
-  $("#periodStart").classList.toggle("hidden", !isCustom);
-  $("#periodSep").classList.toggle("hidden", !isCustom);
-  $("#periodEnd").classList.toggle("hidden", !isCustom);
-  if (state.periodType !== "custom") {
-    const { start, end } = getPeriodRange();
-    $("#periodStart").value = start; $("#periodEnd").value = end;
-  } else {
-    $("#periodStart").value = state.periodStart; $("#periodEnd").value = state.periodEnd;
-  }
+  // 小结固定统计「本周」（参考日期所在自然周，周一~周日完整周，与状态机一致）
+  const W0 = getWeekRange("this");
+  $("#periodFixedLabel").textContent = `本周：${W0.start} ~ ${W0.end}`;
   // 文案 + 原因修正输入
   const { text, st } = buildSummaryText(state.selFam);
   $("#summaryText").textContent = text;
@@ -1799,18 +1774,7 @@ function renderSummaryPanel() {
       prompt("复制失败，请手动复制以下内容：", SUMMARY.text);
     }
   };
-  // 周期控件绑定
-  $("#periodTypeSel").onchange = e => {
-    state.periodType = e.target.value;
-    if (state.periodType === "custom" && !state.periodStart) {
-      const { start, end } = getPeriodRange();
-      state.periodStart = start; state.periodEnd = end;
-    }
-    renderSummaryPanel();
-  };
-  $("#periodStart").onchange = e => { state.periodStart = e.target.value; renderSummaryPanel(); };
-  $("#periodEnd").onchange = e => { state.periodEnd = e.target.value; renderSummaryPanel(); };
-  ["#periodTypeSel", "#periodStart", "#periodEnd"].forEach(id => { if (SNAP_MODE) $(id).disabled = true; });
+  // 周期固定为「本周」，无切换控件
 }
 
 async function refresh() {
@@ -2295,7 +2259,7 @@ function loadSnapshot(snap) {
   renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, getPeriodRange, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason };
 })();
 
 </script>

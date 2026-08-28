@@ -241,6 +241,7 @@
   .sp-ctrl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .sp-group{display:inline-flex;align-items:center;gap:6px}
   .sp-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .sp-fixed{font-size:13px;font-weight:600;color:var(--brand);padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--brand-soft)}
   .sp-ctrl select{font-size:13px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
   .sp-ctrl select:disabled{background:var(--gray-bg);color:var(--muted);cursor:not-allowed}
   .sp-ctrl input[type=date]{font-size:13px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
@@ -309,21 +310,14 @@
       <div class="subtype-bar hidden" id="substatusBar"></div>
     </div>
 
-    <!-- 整体小结（按品种分别总结，周期可配置，原因可人工修正） -->
+    <!-- 整体小结（按品种分别总结，固定统计「本周」，原因可人工修正） -->
     <div class="summary-panel hidden" id="summaryPanel">
       <div class="sp-head">
         <b>整体小结</b>
         <span class="sp-ctrl">
           <span class="sp-group">
             <span class="sp-lbl">周期</span>
-            <select id="periodTypeSel">
-              <option value="7d">近7天</option>
-              <option value="week">本周</option>
-              <option value="custom">自定义</option>
-            </select>
-            <input type="date" id="periodStart" class="hidden">
-            <span id="periodSep" class="hidden">~</span>
-            <input type="date" id="periodEnd" class="hidden">
+            <span class="sp-fixed" id="periodFixedLabel">本周</span>
           </span>
           <span class="sp-group">
             <span class="sp-lbl">品种</span>
