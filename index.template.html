@@ -83,6 +83,18 @@
   .configbar input[type=number]{width:60px;font-size:13px;padding:6px 8px;border:1px solid var(--line);
     border-radius:8px;background:#fff;color:var(--text)}
   .configbar input[type=number]:focus{outline:none;border-color:var(--brand)}
+  .configbar input[type=date]{font-size:13px;padding:5px 8px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--text)}
+  .configbar input[type=date]:focus{outline:none;border-color:var(--brand)}
+  .configbar input[type=date]:disabled{background:var(--gray-bg);color:var(--muted)}
+  /* 周视图选择（上周/本周/下周 单选） */
+  .week-tabs{display:inline-flex;gap:4px}
+  .week-tabs .wk-btn{padding:5px 14px;font-size:13px;border:1px solid var(--line);border-radius:8px;
+    background:#fff;color:var(--text);cursor:pointer;transition:all .15s}
+  .week-tabs .wk-btn:hover:not(:disabled){border-color:var(--brand);color:var(--brand)}
+  .week-tabs .wk-btn.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .week-tabs .wk-btn:disabled{background:var(--gray-bg);color:var(--muted);cursor:default}
+  #weekRangeLabel{white-space:nowrap}
   /* 动态标准周期输入项（按数据中的品种自动生成） */
   .cycle-inputs{display:inline-flex;flex-wrap:wrap;gap:8px;align-items:center}
   .cycle-item{display:inline-flex;align-items:center;gap:4px;background:var(--brand-soft);
@@ -324,10 +336,17 @@
       <div class="sp-adjust hidden" id="summaryAdjust"></div>
     </div>
 
-    <!-- 判定配置 -->
+    <!-- 判定配置：时间（周视图）+ 标准周期 -->
     <div class="configbar">
-      <span class="cfg-label">近期窗口</span>
-      <input type="number" id="advanceNum" value="7" min="0" max="90"> <span class="cfg-label">天：应购药日在此范围内 → 应回购；最近 N 天内已购药 → 已回购</span>
+      <span class="cfg-label">时间</span>
+      <span class="week-tabs" id="weekTabs">
+        <button class="wk-btn" data-wk="last" type="button">上周</button>
+        <button class="wk-btn active" data-wk="this" type="button">本周</button>
+        <button class="wk-btn" data-wk="next" type="button">下周</button>
+      </span>
+      <span class="cfg-label" style="font-weight:400">参考日</span>
+      <input type="date" id="refDateInput" title="参考日期（默认今天）。「本周」= 该日期所在自然周（周一~周日）；改为历史日期即可回看当时各状态的患者名单">
+      <span class="cfg-label" id="weekRangeLabel" style="font-weight:400"></span>
       <span class="cfg-sep"></span>
       <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改）</span>
       <span class="cycle-inputs" id="cycleInputs"></span>
@@ -357,9 +376,6 @@
           <div class="ms-list" id="execMsList"></div>
         </div>
       </div>
-      <span class="fb-date"><label>应购药日期</label>
-      <input type="date" id="startDate"><span class="fb-sep">至</span>
-      <input type="date" id="endDate"></span>
       <button class="btn ghost sm" id="clearBtn">重置筛选</button>
       <span class="fb-export">
         <button class="export" id="exportDesenBtn">导出脱敏名单</button>

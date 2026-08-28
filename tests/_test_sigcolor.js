@@ -37,7 +37,7 @@ function fu(p, ph, exec, extra) { return Object.assign({ source: 'followup', pat
     fu('乙', '2', daysAgo(10), { delay_reason: '经济原因推迟' }),
     fu('丙', '3', daysAgo(10), { stop_reason: '效果不佳停药' }),
   ];
-  App.STORE.cycles = {}; App.state.stdCycle = { 百泽安: 21 }; App.state.start = null; App.state.end = null; App.state.advance = 7;
+  App.STORE.cycles = {}; App.state.stdCycle = { 百泽安: 21 }; App.state.weekSel = 'this'; App.state.refDate = '';
   const rows = App.buildRows();
   const by = {}; for (const r of rows) by[r.patient_name] = r;
   console.log('甲 kind:', by['甲'].fu_signal_kind, '| 乙 kind:', by['乙'].fu_signal_kind, '| 丙 kind:', by['丙'].fu_signal_kind);

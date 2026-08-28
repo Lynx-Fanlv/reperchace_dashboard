@@ -77,7 +77,7 @@ function assert(cond, msg) {
     sales('乙', '10000000002', '2026-07-01', '某新药X'),
   ];
   App.STORE.followups = []; App.STORE.cycles = {};
-  App.state.start = null; App.state.end = null; App.state.advance = 7;
+  App.state.weekSel = 'this'; App.state.refDate = '';
   const rows = App.buildRows();
   const byName = {};
   for (const r of rows) byName[r.patient_name] = r;

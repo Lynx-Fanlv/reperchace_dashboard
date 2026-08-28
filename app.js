@@ -48,8 +48,9 @@ let SNAP_BASE = null; // 快照全量行基准（不可变，供快照模式筛�
 // 界面状态
 const state = {
   cats: new Set(), subs: new Set(), products: new Set(), hospitals: new Set(), executors: new Set(),
-  start: null, end: null, q: "",
-  advance: 7,      // 应回购 = 应购药日前 advance 天内
+  q: "",
+  weekSel: "this", // 周视图：last=上周 / this=本周 / next=下周（单选，默认本周）
+  refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在自然周（周一~周日），可改以回看历史周
   stdCycle: {},   // 标准周期仅按「上传数据中出现品种」动态生成，不写死内置商品
   plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示
   maskMode: "edge",   // 姓名/医生脱敏方式：edge=首尾保留、first=首字保留、all=全部隐藏
@@ -127,6 +128,20 @@ function disp(r, key) {
 // 手动备注的存储键（患者 × 品种）
 function noteKey(r) { return (r._key || "") + "::" + r.product; }
 
+/* ============ 周视图（状态判定的时间基准） ============ */
+// 参考日期：默认今天，可手动改（用于回看任意历史周的应购/购药情况）
+function refToday() { return state.refDate || todayStr(); }
+// 所选周范围：以参考日期所在自然周（周一~周日）为「本周」，前后推 上周/下周
+function getWeekRange(sel) {
+  const base = refToday();
+  const dow = (new Date(base + "T00:00:00").getDay() + 6) % 7; // 周一=0
+  let mon = addDays(base, -dow);
+  if (sel === "last") mon = addDays(mon, -7);
+  else if (sel === "next") mon = addDays(mon, 7);
+  return { start: mon, end: addDays(mon, 6) };
+}
+const WEEK_LABEL = { last: "上周", this: "本周", next: "下周" };
+
 /* ============ 合并计算（核心） ============ */
 // 1) 按患者（电话/姓名）聚合销售记录 → 每患者每品种的购药时间序列
 // 2) 应购药日期 = 最近购药日 + 周期（周期表优先，否则标准周期）
@@ -187,12 +202,13 @@ function buildRows() {
       bp.dates.sort();
       const lastPurchase = bp.dates[bp.dates.length - 1];
       const cycle = cycles[p.name] || state.stdCycle[fam] || 30;
-      // 已回购判定（统一「近期窗口 N 天」）：最近一次购药日期距今 ≤ N 天
-      // N = state.advance，与「应回购 = 应购日前 N 天内」共用同一近期标尺；
-      // 不再受应购药日期筛选范围影响（筛选范围仅负责按日期裁剪名单）
+      // 周视图状态判定基准：所选周 W（以参考日期所在自然周为「本周」）
+      //  当周 [W.start, W.end] 内有购药记录 → 已回购（购药事实最优先）
+      //  应购日 < W.start → 已逾期；应购日 ∈ W → 应回购；应购日 > W.end → 未到期
       // 应购药日期列显示「预判应购日」= 倒数第二次购药日 + 周期（≥2条记录时），
       // 用于对比实际购药是提前还是延后（需求：已回购行不呈现下次应购时间）
-      const inRepurchaseWindow = lastPurchase >= addDays(today, -state.advance) && lastPurchase <= today;
+      const W = getWeekRange(state.weekSel);
+      const purchasedInWeek = bp.dates.some(d => d >= W.start && d <= W.end);
       let expectedDue = null, dueOffset = null;
       if (bp.dates.length >= 2) {
         expectedDue = addDays(bp.dates[bp.dates.length - 2], cycle);
@@ -221,25 +237,23 @@ function buildRows() {
         }
       }
 
-      // 状态判定（大类）：
-      //  应回购：应购日距今 0~advance 天（优先于「已回购」）
-      //  已逾期：应购日已过（任何逾期天数）
-      //  已回购：最近购药日期落在「已回购窗口」内（默认距今≤advance，或落在所选日期范围）
-      //  未到期：其余情况
+      // 状态判定（周维度，购药事实优先）：
+      //  当周有购药记录 → 已回购（最优先：本周该买也买了 / 提前买都算）
+      //  应购日 < 周首 → 已逾期；应购日 ∈ 所选周 → 应回购；应购日 > 周末 → 未到期
       // 所有患者均按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据随访内容；应回购可点选手动修正，其余状态自动判定）
       const sig = matched ? M.followupSignal(matched) : { signal: "unknown", reason: "" };
-      const days = diffDays(dueDate, today); // 正=未来，负=逾期
+      const days = diffDays(dueDate, today); // 正=未来，负=逾期（相对真实今天，供列上标注）
       const subKey = k + "::" + fam;
       const autoSub = sig.signal === "dropout" ? "已脱落"
                     : sig.signal === "nonstd" ? "预判延期" : "正常状态";
       let category, substatus = autoSub;
-      if (days >= 0 && days <= state.advance) {
+      if (purchasedInWeek) {
+        category = "已回购";
+      } else if (dueDate < W.start) {
+        category = "已逾期";
+      } else if (dueDate <= W.end) {
         category = "应回购";
         substatus = STORE.subOverrides[subKey] || autoSub; // 用户点选修正优先（应回购）
-      } else if (days < 0) {
-        category = "已逾期";
-      } else if (inRepurchaseWindow) {
-        category = "已回购";
       } else {
         category = "未到期";
       }
@@ -256,7 +270,7 @@ function buildRows() {
         due_offset: isRepur ? dueOffset : null,   // 已回购行：正=延期/负=提前/0=按时
         purchase_days_ago: isRepur ? Math.max(0, diffDays(today, lastPurchase)) : null, // 最近购药距今
         days_to_due: days,
-        repurchased: inRepurchaseWindow,
+        repurchased: purchasedInWeek,
         fu_time: matched ? (P.datePart(matched.exec_time) || P.datePart(matched.plan_time) || "") : "",
         fu_type: matched ? (matched.summary_type || "") : "",
         executor: matched ? (matched.executor || "") : "",
@@ -269,21 +283,8 @@ function buildRows() {
     }
   }
 
-  // 排序：应购药日期落入 [state.start, state.end] 范围的最前（按应购日期升序），
-  // 范围外的随后；同一组内应购日期越早越靠前。
-  // 已回购行：范围按「最近购药日期」判断，日期取「预判应购日」（无预判基准的空值排最后）。
-  const rangeDate = r => (r.status === "已回购" ? (r.last_purchase || "") : r.due_date);
-  const inRange = r => {
-    if (!state.start && !state.end) return true;
-    const d = rangeDate(r);
-    if (!d) return false;
-    if (state.start && d < state.start) return false;
-    if (state.end && d > state.end) return false;
-    return true;
-  };
+  // 排序：按应购药日期升序（已回购行为预判应购日）；无预判基准的空值排最后。
   rows.sort((a, b) => {
-    const ia = inRange(a) ? 0 : 1, ib = inRange(b) ? 0 : 1;
-    if (ia !== ib) return ia - ib;
     const da = a.due_date || "9999-12-31", db = b.due_date || "9999-12-31";
     return da.localeCompare(db);
   });
@@ -298,20 +299,6 @@ function filterRows(rows) {
   if (state.products.size) rs = rs.filter(r => state.products.has(r.product));
   if (state.hospitals.size) rs = rs.filter(r => state.hospitals.has(r.hospital || "未知"));
   if (state.executors.size) rs = rs.filter(r => state.executors.has(r.executor || "未知"));
-  // 应购药日期范围：裁剪名单（start/end 有值即生效）。
-  // 「已逾期」不受时间窗影响（逾期患者始终保留，便于跟进）；
-  // 「已回购」行按「最近购药日期」匹配（其应购药日期列显示预判应购日，不参与范围匹配）；
-  // 其余状态按应购药日期（下次应购日）匹配。
-  if (state.start || state.end) {
-    rs = rs.filter(r => {
-      if (r.status === "已逾期") return true;
-      const d = r.status === "已回购" ? (r.last_purchase || "") : r.due_date;
-      if (!d) return false;
-      if (state.start && d < state.start) return false;
-      if (state.end && d > state.end) return false;
-      return true;
-    });
-  }
   if (state.q) {
     const ql = state.q.trim().toLowerCase();
     rs = rs.filter(r => {
@@ -426,7 +413,8 @@ function updateFilterInfo() {
   if (state.products.size) parts.push("品种=" + state.products.size + "项");
   if (state.hospitals.size) parts.push("医院=" + state.hospitals.size + "项");
   if (state.executors.size) parts.push("随访人=" + state.executors.size + "项");
-  if (state.start || state.end) parts.push("应购日期=" + ((state.start || "…") + "~" + (state.end || "…")));
+  const W = getWeekRange(state.weekSel);
+  parts.push("时间=" + WEEK_LABEL[state.weekSel] + " " + W.start + "~" + W.end);
   const plain = [];
   if (state.plainName) plain.push("姓名明文");
   if (state.plainPhone) plain.push("电话明文");
@@ -444,18 +432,12 @@ function renderTable() {
   if (state.page > pages) state.page = pages;
   const start = (state.page - 1) * state.pageSize;
   const rows = DATA.rows.slice(start, start + state.pageSize);
-  const inRange = r => {
-    if (!state.start && !state.end) return true;
-    if (state.start && r.due_date < state.start) return false;
-    if (state.end && r.due_date > state.end) return false;
-    return true;
-  };
   $("#thead").innerHTML = cols.map(([, label]) => `<th>${label}</th>`).join("");
   const tb = $("#tbody");
   if (!total) { tb.innerHTML = ""; $("#empty").classList.remove("hidden"); }
   else {
     $("#empty").classList.add("hidden");
-    tb.innerHTML = rows.map((r, i) => rowHtml(r, start + i, inRange(r), cols)).join("");
+    tb.innerHTML = rows.map((r, i) => rowHtml(r, start + i, cols)).join("");
   }
   // 手动备注列：输入即保存到 STORE.notes（快照时一并保存）
   tb.querySelectorAll("input.note-input").forEach(inp => {
@@ -490,7 +472,7 @@ function renderTable() {
   if (tblWrap) tblWrap.scrollTop = 0;
 }
 
-function rowHtml(r, idx, inRng, cols) {
+function rowHtml(r, idx, cols) {
   const days = r.days_to_due;
   const isRepur = r.status === "已回购";
   // 已回购行：应购药日期列显示「预判应购日」+ 提前/延后标注（无预判基准显示 —）
@@ -537,7 +519,7 @@ function rowHtml(r, idx, inRng, cols) {
     }
     return `<td>${esc(disp(r, key))}</td>`;
   }).join("");
-  return `<tr class="data-row ${inRng ? "in-range" : ""}" data-idx="${idx}">${cells}</tr>`;
+  return `<tr class="data-row" data-idx="${idx}">${cells}</tr>`;
 }
 
 function expandHtml(r, colspan) {
@@ -595,13 +577,14 @@ function renderPagination(total) {
 
 /* ============ 整体小结（按品种分别总结；周期可配置） ============ */
 // 当前周期范围（7d=滚动近7天 / week=本周一至今 / custom=自定义）
+// 「本周」以参考日期（refDate，默认今天）所在自然周为基准
 function getPeriodRange() {
-  const today = todayStr();
+  const today = refToday();
   if (state.periodType === "custom" && state.periodStart && state.periodEnd) {
     return { start: state.periodStart, end: state.periodEnd };
   }
   if (state.periodType === "week") {
-    const dow = (new Date().getDay() + 6) % 7; // 周一=0
+    const dow = (new Date(today + "T00:00:00").getDay() + 6) % 7; // 周一=0
     return { start: addDays(today, -dow), end: today };
   }
   return { start: addDays(today, -7), end: today }; // 近7天（滚动）
@@ -795,6 +778,7 @@ async function refresh() {
   }));
   renderTable();
   renderSummaryPanel();
+  renderWeekBar();
 }
 
 /* ============ 上传 / 分析（统一上传 → 列表确认/删除 → 开始分析后保留） ============ */
@@ -916,14 +900,35 @@ $("#clearAllBtn").onclick = () => {
 /* ============ 筛选交互 ============ */
 $("#clearBtn").onclick = () => {
   state.cats.clear(); state.subs.clear(); state.products.clear(); state.hospitals.clear(); state.executors.clear();
-  state.start = null; state.end = null;
+  state.weekSel = "this"; state.refDate = "";
   state.q = "";
-  $("#searchInput").value = ""; $("#startDate").value = ""; $("#endDate").value = "";
+  $("#searchInput").value = "";
   state.page = 1; refresh();
 };
-$("#startDate").onchange = e => { state.start = e.target.value || null; state.page = 1; refresh(); };
-$("#endDate").onchange = e => { state.end = e.target.value || null; state.page = 1; refresh(); };
-$("#advanceNum").onchange = e => { state.advance = Math.max(0, parseInt(e.target.value, 10) || 7); refresh(); };
+// 周视图：上周/本周/下周（单选）——所选周 = 状态判定的时间基准
+// 参考日期：默认今天；可手动改，以回看任意历史周的应购/购药情况（周范围随其自然周变化）
+function renderWeekBar() {
+  document.querySelectorAll("#weekTabs .wk-btn").forEach(b => {
+    b.classList.toggle("active", state.weekSel === b.dataset.wk);
+    b.disabled = SNAP_MODE;
+  });
+  const W = getWeekRange(state.weekSel);
+  const extra = state.refDate ? `（参考日 ${state.refDate}）` : "";
+  $("#weekRangeLabel").textContent = `${WEEK_LABEL[state.weekSel]}：${W.start} ~ ${W.end}${extra}`;
+  $("#refDateInput").value = state.refDate || todayStr();
+}
+document.querySelectorAll("#weekTabs .wk-btn").forEach(b => {
+  b.onclick = () => {
+    if (SNAP_MODE) return;
+    state.weekSel = b.dataset.wk;
+    state.page = 1; refresh();
+  };
+});
+$("#refDateInput").onchange = e => {
+  if (SNAP_MODE) return;
+  state.refDate = e.target.value || "";
+  state.page = 1; refresh();
+};
 // 标准周期维护（周期表未覆盖患者时使用）
 // 标准周期按「数据中出现品种」动态维护：
 // 只对上传数据实际出现的品种补标准周期 —— 内置品种族用内置值，新品种默认 30 天（用户可在界面修改）
@@ -1139,8 +1144,9 @@ async function doSnapshot(desen) {
     const snap = {
       desen, rows, notes: STORE.notes, subOverrides: STORE.subOverrides,
       summary: CURRENT.summary, state: {
-        advance: state.advance, stdCycle: state.stdCycle, pageSize: state.pageSize,
-        start: state.start, end: state.end, q: state.q,
+        weekSel: state.weekSel, refDate: state.refDate,
+        stdCycle: state.stdCycle, pageSize: state.pageSize,
+        q: state.q,
         cats: [...state.cats], subs: [...state.subs],
         products: [...state.products],
         hospitals: [...state.hospitals], executors: [...state.executors],
@@ -1195,12 +1201,12 @@ function loadSnapshot(snap) {
   STORE.notes = snap.notes || {};
   STORE.subOverrides = snap.subOverrides || {};
   const s = snap.state || {};
-  state.advance = s.advance != null ? s.advance : 7;
+  state.weekSel = s.weekSel || "this";
+  state.refDate = s.refDate || "";
   state.pageSize = s.pageSize || 50;
   state.page = 1;
   if (s.stdCycle) state.stdCycle = s.stdCycle;
   renderCycleInputs();
-  state.start = s.start || null; state.end = s.end || null;
   state.q = s.q || "";
   state.cats = new Set(s.cats || []);
   state.subs = new Set(s.subs || []);
@@ -1224,7 +1230,7 @@ function loadSnapshot(snap) {
     : "⚠️ 这是一份「不脱敏」快照：包含明文姓名、电话、医生等个人信息，仅可分享给可信接收方。";
   const fb = document.querySelector(".filebar"); if (fb) fb.classList.add("hidden");
   ["#exportDesenBtn", "#exportPlainBtn", "#snapshotDesenBtn", "#snapshotPlainBtn", "#clearAllBtn"].forEach(sl => $(sl).classList.add("hidden"));
-  ["#advanceNum", "#startDate", "#endDate", "#clearBtn"].forEach(id => $(id).disabled = true);
+  ["#refDateInput", "#clearBtn"].forEach(id => $(id).disabled = true);
   document.querySelectorAll("#cycleInputs .ci-num").forEach(inp => inp.disabled = true);
   document.querySelectorAll(".mm-btn").forEach(b => b.disabled = true);
   $("#dataInfo").textContent = `快照 · 生成于 ${new Date(snap.buildAt).toLocaleString("zh-CN")}`;
@@ -1240,5 +1246,5 @@ function loadSnapshot(snap) {
   renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, getPeriodRange, buildSummaryStats, buildSummaryText, renderSummaryPanel, classifyFuReason: M.classifyFuReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, getPeriodRange, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason };
 })();

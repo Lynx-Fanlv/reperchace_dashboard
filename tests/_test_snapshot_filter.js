@@ -88,7 +88,7 @@ function assert(cond, msg) {
     desen: true, buildAt: new Date().toISOString(), notes: {}, subOverrides: {},
     rows: rows.map(r => Object.assign({}, r, { _matched: undefined, _key: undefined })),
     summary: App.buildSummary(rows),
-    state: { advance: 7, stdCycle: { 百泽安: 21, 百悦泽: 28 }, maskMode: 'edge' },
+    state: { weekSel: 'this', refDate: '', stdCycle: { 百泽安: 21, 百悦泽: 28 }, maskMode: 'edge' },
   };
 
   console.log('\n===== 打开快照 =====');
@@ -116,12 +116,12 @@ function assert(cond, msg) {
   App.state.cats.clear(); App.state.subs.clear(); await App.refresh();
   assert(App.DATA.rows.length === total, `清空下钻 → 恢复全量 ${total} 行`);
 
-  console.log('\n===== 应购日期时间窗（已逾期豁免） =====');
-  App.state.start = today; App.state.end = today; await App.refresh();
-  // 应回购(due=今天)保留 + 已逾期豁免保留，未到期(due=9月)被裁掉
-  assert(App.DATA.rows.length === 20, `单日窗今天 → 20 行（应回购10+已逾期10）`);
-  App.state.start = null; App.state.end = null; await App.refresh();
-  assert(App.DATA.rows.length === total, `清空时间窗 → 恢复全量 ${total} 行`);
+  console.log('\n===== 快照模式周控件只读（名单不随周变化） =====');
+  // 快照行状态为保存时判定结果，无法按周重算 → 周选择器只读；切换 weekSel 不影响名单
+  App.state.weekSel = 'last'; await App.refresh();
+  assert(App.DATA.rows.length === total, `快照模式切换周视图不重算 → 仍全量 ${total} 行`);
+  App.state.weekSel = 'this'; await App.refresh();
+  assert(App.DATA.rows.length === total, `恢复本周 → 全量 ${total} 行`);
 
   console.log('\n===== 关键词搜索 =====');
   App.state.q = '不存在的关键词xyz不存在'; await App.refresh();
