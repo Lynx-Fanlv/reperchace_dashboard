@@ -255,12 +255,19 @@
     border-radius:10px;padding:12px 14px}
   .sp-adjust{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .sp-adjust.hidden{display:none}
-  .sa-lbl{font-size:12px;color:var(--muted);font-weight:600}
-  .sa-item{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--line);
-    border-radius:8px;padding:3px 8px}
-  .sa-name{font-size:12px;color:var(--text)}
-  .sa-num{width:44px;font-size:12px;padding:3px 5px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text)}
-  .sa-num:disabled{background:var(--gray-bg);color:var(--muted)}
+  /* 分类维护面板 */
+  .reason-manager{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px}
+  .reason-manager.hidden{display:none}
+  .rm-head{font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
+  .rm-hint{font-size:12px;font-weight:400;color:var(--muted);margin-left:8px}
+  .rm-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  .rm-row{display:flex;align-items:center;justify-content:space-between;font-size:13px;
+    background:var(--brand-soft);border:1px solid var(--line);border-radius:6px;padding:4px 10px}
+  .rm-row.rm-child{margin-left:26px;background:#fff}
+  .rm-acts{display:inline-flex;gap:10px}
+  .rm-acts a{font-size:12px;color:var(--brand);cursor:pointer}
+  .rm-acts a[data-act="del"]{color:#e03131}
+  .rm-foot{display:flex;gap:8px}
 </style>
 </head>
 <body>
@@ -305,13 +312,13 @@
 
     <!-- 状态统计 -->
     <div class="filter-section">
-      <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」= 应回未回 + 应回已回（细分可点选）；下钻：正常状态 / 预判延期 / 已脱落（所有患者按随访信号标注，点标签可手动切换）；计数随品种/医院/随访人等筛选变化</span></div>
+      <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」= 应回未回 + 应回已回（细分可点选）；「未购药原因」列点击可为患者标注原因（自动判定预填，可覆盖），小结自动汇总，分类可点「管理分类」维护；计数随品种/医院/药房等筛选变化</span></div>
       <div class="summary" id="summary"></div>
       <div class="subtype-bar hidden" id="repurPartBar"></div>
-      <div class="subtype-bar hidden" id="substatusBar"></div>
+      <div class="subtype-bar hidden" id="reasonBar"></div>
     </div>
 
-    <!-- 整体小结（按品种分别总结，固定统计「本周」，原因可人工修正） -->
+    <!-- 整体小结（按品种分别总结，固定统计「本周」；未购药原因=患者明细标注汇总，分类可维护） -->
     <div class="summary-panel hidden" id="summaryPanel">
       <div class="sp-head">
         <b>整体小结</b>
@@ -324,11 +331,21 @@
             <span class="sp-lbl">品种</span>
             <span class="sp-chips" id="summaryFamChips"></span>
           </span>
+          <button class="btn ghost sm" id="manageReasonBtn">管理分类</button>
           <button class="btn ghost sm" id="copySummaryBtn">复制小结</button>
         </span>
       </div>
       <pre class="sp-text" id="summaryText"></pre>
       <div class="sp-adjust hidden" id="summaryAdjust"></div>
+      <!-- 分类维护面板（未购药原因分类树：增删改/加子类/恢复默认；原因列选项与小结文案跟随） -->
+      <div class="reason-manager hidden" id="reasonManager">
+        <div class="rm-head">未购药原因分类维护<span class="rm-hint">修改后「未购药原因」列选项与小结文案同步更新</span></div>
+        <div class="rm-list" id="reasonManagerList"></div>
+        <div class="rm-foot">
+          <button class="btn ghost sm" id="reasonManagerAdd">+ 新增分类</button>
+          <button class="btn ghost sm" id="reasonManagerReset">恢复默认</button>
+        </div>
+      </div>
     </div>
 
     <!-- 判定配置：时间（周视图）+ 标准周期 -->
@@ -1060,7 +1077,6 @@ const M = window.Mapping;
 const P = window.Pipeline;
 const CATEGORIES = M.CATEGORIES;    // 应回购（=应回未回+应回已回）/ 未到期 / 已逾期
 const REPUR_PARTS = M.REPUR_PARTS;  // 应回购细分：应回未回 / 应回已回
-const SUBSTATUS = M.SUBSTATUS;      // 正常状态 / 预判延期 / 已脱落（随访下钻）
 
 const CAT_COLOR = {
   "应回购": "#e03131",   // 所选周应购清单（应回未回 + 应回已回）
@@ -1071,11 +1087,37 @@ const REPUR_PART_COLOR = {
   "应回未回": "#e03131", // 应购日∈所选周但未购药，需跟进
   "应回已回": "#0f9d6b", // 所选周内已购药（含提前购药）
 };
-const SUB_COLOR = {
-  "正常状态": "#0f9d6b", // 随访正常，预计按时回购
-  "预判延期": "#f08c00", // 随访显示减量/延迟/未按时
-  "已脱落": "#868e96",   // 随访明确停药/脱落
-};
+
+// ---- 未购药原因分类树（可维护：增删改 / 加子类 / 恢复默认）----
+// 层级结构：父类人数 = 其子类人数之和；默认「脱落」为父类 + 5 个子类
+const DEFAULT_REASON_TREE = [
+  { key: "delay", label: "延迟用药", children: [] },
+  { key: "dropout", label: "脱落", children: [
+    { key: "dropout_effect", label: "效果不佳" },
+    { key: "dropout_recover", label: "自觉好转" },
+    { key: "dropout_adr", label: "不良反应" },
+    { key: "dropout_econ", label: "经济" },
+    { key: "dropout_other", label: "其他" },
+  ]},
+  { key: "channel", label: "转渠道", children: [] },
+  { key: "fuFail", label: "随访失败未探寻原因", children: [] },
+  { key: "prolong", label: "医嘱延长", children: [] },
+  { key: "switch", label: "换药", children: [] },
+];
+function cloneReasonTree(t) { return (t || []).map(n => ({ key: n.key, label: n.label, children: (n.children || []).map(c => ({ key: c.key, label: c.label, children: [] })) })); }
+// 展平：-> [{ key, label, parent, path }]（path 用于展示，如「脱落·效果不佳」）
+function flattenReasonTree(t) {
+  const out = [];
+  (t || []).forEach(n => {
+    out.push({ key: n.key, label: n.label, parent: "", path: n.label });
+    (n.children || []).forEach(c => out.push({ key: c.key, label: c.label, parent: n.key, path: n.label + "·" + c.label }));
+  });
+  return out;
+}
+function reasonLabel(tree, key) {
+  const f = flattenReasonTree(tree).find(x => x.key === key);
+  return f ? f.path : "";
+}
 
 // 名单表列（note = 用户手动填写的跟进备注列，随快照保存）
 const LIST_COLS = [
@@ -1093,18 +1135,18 @@ const LIST_COLS = [
   ["fu_type", "随访类型"],
   ["executor", "随访人"],
   ["status", "状态"],
-  ["substatus", "下钻"],
+  ["reason", "未购药原因"],
   ["fu_signal", "随访信号"],
   ["note", "跟进备注"],
 ];
 
-const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, subOverrides: {} };
+const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, reasonOverrides: {} };
 let SNAP_MODE = false;
 let SNAP_BASE = null; // 快照全量行基准（不可变，供快照模式筛选；避免 DATA.rows 被覆盖后累积丢失）
 
 // 界面状态
 const state = {
-  cats: new Set(), subs: new Set(), repurParts: new Set(), products: new Set(), hospitals: new Set(), pharmacies: new Set(), executors: new Set(),
+  cats: new Set(), reasons: new Set(), repurParts: new Set(), products: new Set(), hospitals: new Set(), pharmacies: new Set(), executors: new Set(),
   q: "",
   weekSel: "this", // 周视图：last=上周 / this=本周 / next=下周（单选，默认本周）
   refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在自然周（周一~周日），可改以回看历史周
@@ -1113,10 +1155,10 @@ const state = {
   maskMode: "edge",   // 姓名/医生脱敏方式：edge=首尾保留、first=首字保留、all=全部隐藏
   hiddenCols: new Set(),
   page: 1, pageSize: 50,
-  // 整体小结：周期（7d=近7天/week=本周/custom=自定义）+ 选中品种 + 未购药原因人工修正
+  // 整体小结：固定统计「本周」+ 选中品种 + 未购药原因分类树（可维护）
   periodType: "7d", periodStart: "", periodEnd: "",
   selFam: "",
-  fuAdj: {},   // { [fam]: { delay: n, dropout_effect: n, dropout_recover: n, dropout_adr: n, dropout_econ: n, dropout_other: n, channel: n, fuFail: n, prolong: n, switch: n } } 仅存用户改过的值
+  reasonTree: cloneReasonTree(DEFAULT_REASON_TREE), // 用户维护后的分类树（随快照保存）
 };
 let SUMMARY = { text: "" }; // 当前整体小结文本（快照保存用）
 let ALL_ROWS = [];          // 全量计算行（小结统计用，不随筛选变化）
@@ -1295,20 +1337,30 @@ function buildRows() {
       // 状态判定（周维度，购药事实优先）：
       //  当周有购药记录 → 应回购·应回已回（最优先：本周该买也买了 / 提前买都算）
       //  应购日 < 周首 → 已逾期；应购日 ∈ 所选周 → 应回购·应回未回；应购日 > 周末 → 未到期
-      // 所有患者均按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据随访内容；应回购可点选手动修正，其余状态自动判定）
+      // 未购药原因：自动判定（随访文本 classifyFuReason）预填，用户可在「未购药原因」列点选覆盖
       const sig = matched ? M.followupSignal(matched) : { signal: "unknown", reason: "" };
       const days = diffDays(dueDate, today); // 正=未来，负=逾期（相对真实今天，供列上标注）
       const subKey = k + "::" + fam;
-      const autoSub = sig.signal === "dropout" ? "已脱落"
-                    : sig.signal === "nonstd" ? "预判延期" : "正常状态";
-      let category, substatus = autoSub, repurPart = "";
+      // 自动判定原因 key（dropout 细分为 dropout_xxx；仅保留分类树中存在的分类）
+      const treeKeys = flattenReasonTree(state.reasonTree).map(f => f.key);
+      let autoReason = "";
+      if (matched) {
+        const c = M.classifyFuReason(matched);
+        if (c) {
+          const k = c.key === "dropout"
+            ? ("dropout_" + (c.detail === "效果不佳" ? "effect" : c.detail === "自觉好转" ? "recover" : c.detail === "不良反应" ? "adr" : c.detail === "经济" ? "econ" : "other"))
+            : c.key;
+          if (treeKeys.includes(k)) autoReason = k;
+        }
+      }
+      const reason = STORE.reasonOverrides[subKey] || autoReason; // 用户点选覆盖优先
+      let category, repurPart = "";
       if (purchasedInWeek) {
         category = "应回购"; repurPart = "应回已回";
       } else if (dueDate < W.start) {
         category = "已逾期";
       } else if (dueDate <= W.end) {
         category = "应回购"; repurPart = "应回未回";
-        substatus = STORE.subOverrides[subKey] || autoSub; // 用户点选修正优先（应回购）
       } else {
         category = "未到期";
       }
@@ -1333,7 +1385,8 @@ function buildRows() {
         fu_note: matched ? (matched.follow_note || "") : "",
         fu_signal: sig.signal === "unknown" ? "" : sig.reason,
         fu_signal_kind: sig.signal, // 信号类别：normal / nonstd / dropout / unknown（用于着色）
-        status: category, substatus,
+        reason: reason, // 未购药原因 key（自动判定预填，用户可覆盖；空=未标）
+        status: category,
         _matched: matched,
       });
     }
@@ -1354,7 +1407,7 @@ function filterRows(rows, opts) {
   let rs = rows;
   if (!(opts && opts.skipCat)) {
     if (state.cats.size) rs = rs.filter(r => state.cats.has(r.status));
-    if (state.subs.size) rs = rs.filter(r => r.substatus && state.subs.has(r.substatus));
+    if (state.reasons.size) rs = rs.filter(r => r.reason && state.reasons.has(r.reason));
     if (state.repurParts.size) rs = rs.filter(r => r.repur_part && state.repurParts.has(r.repur_part));
   }
   if (state.products.size) rs = rs.filter(r => state.products.has(r.product));
@@ -1374,10 +1427,10 @@ function filterRows(rows, opts) {
 }
 
 function buildSummary(rows) {
-  const by_status = {}, by_substatus = {}, by_repur_part = {}, by_product = {}, by_hospital = {}, by_pharmacy = {}, by_executor = {}, by_fu_type = {};
+  const by_status = {}, by_reason = {}, by_repur_part = {}, by_product = {}, by_hospital = {}, by_pharmacy = {}, by_executor = {}, by_fu_type = {};
   for (const r of rows) {
     by_status[r.status] = (by_status[r.status] || 0) + 1;
-    if (r.substatus) by_substatus[r.substatus] = (by_substatus[r.substatus] || 0) + 1;
+    if (r.reason) by_reason[r.reason] = (by_reason[r.reason] || 0) + 1;
     if (r.repur_part) by_repur_part[r.repur_part] = (by_repur_part[r.repur_part] || 0) + 1;
     by_product[r.product || "未知"] = (by_product[r.product || "未知"] || 0) + 1;
     by_hospital[r.hospital || "未知"] = (by_hospital[r.hospital || "未知"] || 0) + 1;
@@ -1385,7 +1438,7 @@ function buildSummary(rows) {
     by_executor[r.executor || "未知"] = (by_executor[r.executor || "未知"] || 0) + 1;
     by_fu_type[r.fu_type || "无随访"] = (by_fu_type[r.fu_type || "无随访"] || 0) + 1;
   }
-  return { total: rows.length, by_status, by_substatus, by_repur_part, by_product, by_hospital, by_pharmacy, by_executor, by_fu_type };
+  return { total: rows.length, by_status, by_reason, by_repur_part, by_product, by_hospital, by_pharmacy, by_executor, by_fu_type };
 }
 
 /* ============ 渲染 ============ */
@@ -1427,24 +1480,27 @@ function renderSummary(d) {
   } else {
     repurBar.classList.add("hidden");
   }
-  // 随访下钻子状态（chips 点选筛选）
-  const subBar = $("#substatusBar");
-  if ((d.by_substatus && Object.keys(d.by_substatus).length)) {
-    subBar.classList.remove("hidden");
-    subBar.innerHTML = '<span class="lbl">下钻状态</span>' + SUBSTATUS.map(k => {
-      const n = d.by_substatus[k] || 0;
+  // 未购药原因（chips 点选筛选；选项=用户维护的分类树叶子项）
+  const reasonBar = $("#reasonBar");
+  const rc = d.by_reason || {};
+  if (Object.keys(rc).length) {
+    const flat = flattenReasonTree(state.reasonTree);
+    reasonBar.classList.remove("hidden");
+    reasonBar.innerHTML = '<span class="lbl">未购药原因</span>' + flat.map(f => {
+      const n = rc[f.key] || 0;
       if (!n) return "";
-      const act = state.subs.has(k) ? "active" : "";
-      return `<span class="chip ${act}" data-sub="${k}" style="border-color:${SUB_COLOR[k]}">${k} (${n})</span>`;
+      const act = state.reasons.has(f.key) ? "active" : "";
+      const color = f.parent ? "#868e96" : "#e8590c";
+      return `<span class="chip ${act}" data-reason="${f.key}" style="border-color:${color}">${esc(f.path)} (${n})</span>`;
     }).join("");
-    subBar.querySelectorAll(".chip").forEach(c => c.onclick = () => {
-      const k = c.dataset.sub;
-      if (state.subs.has(k)) state.subs.delete(k); else state.subs.add(k);
+    reasonBar.querySelectorAll(".chip").forEach(c => c.onclick = () => {
+      const k = c.dataset.reason;
+      if (state.reasons.has(k)) state.reasons.delete(k); else state.reasons.add(k);
       state.page = 1;
       refresh();
     });
   } else {
-    subBar.classList.add("hidden");
+    reasonBar.classList.add("hidden");
   }
   buildMs("prodMs", d.by_product, state.products, "品种");
   buildMs("hospMs", d.by_hospital, state.hospitals, "医院");
@@ -1494,7 +1550,7 @@ function updateFilterInfo() {
   const parts = [];
   if (state.q) parts.push("搜索=" + state.q);
   if (state.cats.size) parts.push("状态=" + [...state.cats].join("/"));
-  if (state.subs.size) parts.push("下钻=" + [...state.subs].join("/"));
+  if (state.reasons.size) parts.push("原因=" + [...state.reasons].map(k => reasonLabel(state.reasonTree, k)).join("/"));
   if (state.products.size) parts.push("品种=" + state.products.size + "项");
   if (state.hospitals.size) parts.push("医院=" + state.hospitals.size + "项");
   if (state.pharmacies.size) parts.push("药房=" + state.pharmacies.size + "项");
@@ -1530,17 +1586,38 @@ function renderTable() {
     inp.addEventListener("input", () => { STORE.notes[inp.dataset.key] = inp.value; });
     inp.addEventListener("click", e => e.stopPropagation()); // 不触发行展开
   });
-  // 应回购下钻子状态：点击循环切换（正常状态 → 预判延期 → 已脱落 → 正常状态）
-  tb.querySelectorAll("span.sub-tag.clickable").forEach(tag => {
+  // 未购药原因列：点击 → 行内展开层级 select 选择原因（快照模式只读）
+  tb.querySelectorAll("span.reason-tag.clickable").forEach(tag => {
     tag.addEventListener("click", e => {
       e.stopPropagation();
+      const td = tag.parentNode;
+      if (!td || SNAP_MODE) return;
       const key = tag.dataset.key;
-      const cur = tag.dataset.sub;
-      const seq = SUBSTATUS;
-      const next = seq[(seq.indexOf(cur) + 1) % seq.length];
-      STORE.subOverrides[key] = next;
-      state.page = 1;
-      refresh();
+      const cur = tag.dataset.reason || "";
+      const flat = flattenReasonTree(state.reasonTree);
+      const groups = {};
+      flat.forEach(f => { (groups[f.parent] = groups[f.parent] || []).push(f); });
+      const optsTop = (groups[""] || []).map(f =>
+        `<option value="${esc(f.key)}" ${cur === f.key ? "selected" : ""}>${esc(f.label)}</option>`).join("");
+      const optGroups = Object.keys(groups).filter(p => p).map(p => {
+        const parentLabel = reasonLabel(state.reasonTree, p);
+        return `<optgroup label="${esc(parentLabel)}">` + groups[p].map(f =>
+          `<option value="${esc(f.key)}" ${cur === f.key ? "selected" : ""}>${esc(f.label)}</option>`).join("") + "</optgroup>";
+      }).join("");
+      td.innerHTML = `<select class="reason-sel" data-key="${esc(key)}" data-cur="${esc(cur)}">
+        <option value="">未标</option>${optsTop}${optGroups}</select>`;
+      const sel = td.querySelector("select");
+      sel.focus();
+      let doneOnce = false;
+      const done = () => {
+        if (doneOnce) return;
+        doneOnce = true;
+        STORE.reasonOverrides[sel.dataset.key] = sel.value;
+        state.page = 1;
+        refresh();
+      };
+      sel.onchange = done;
+      sel.onblur = done;
     });
   });
   tb.querySelectorAll("tr.data-row").forEach(tr => {
@@ -1585,11 +1662,22 @@ function rowHtml(r, idx, cols) {
       if (r.repur_part) tag += ` <span class="tag" style="background:${REPUR_PART_COLOR[r.repur_part]}">${esc(r.repur_part)}</span>`;
       return `<td>${tag}</td>`;
     }
-    if (key === "substatus") {
-      if (!r.substatus) return `<td><span class="muted">—</span></td>`;
-      const color = SUB_COLOR[r.substatus] || "#868e96";
-      const note = SNAP_MODE ? "" : "title=\"点击切换下钻状态\"";
-      return `<td><span class="tag sub-tag ${note ? "clickable" : ""}" data-key="${esc(noteKey(r))}" data-sub="${esc(r.substatus)}" style="background:${color};cursor:${SNAP_MODE ? "default" : "pointer"}" ${note}>${esc(r.substatus)}</span></td>`;
+    if (key === "reason") {
+      // 未购药原因列：自动判定预填 / 人工点选覆盖（所有患者可点选标注）；无标注按状态显示占位
+      let label = "", color = "#868e96";
+      if (r.reason) {
+        label = reasonLabel(state.reasonTree, r.reason) || r.reason;
+        color = "#e8590c";
+      } else if (isRepur) {
+        label = "已购药"; color = "#0f9d6b";
+      } else if (r.status === "未到期") {
+        label = "—";
+      } else {
+        label = "未标";
+      }
+      const clickable = SNAP_MODE ? "" : " clickable";
+      const title = SNAP_MODE ? "" : "title=\"点击标注未购药原因\"";
+      return `<td><span class="tag reason-tag${clickable}" data-key="${esc(noteKey(r))}" data-reason="${esc(r.reason || "")}" style="background:${color};cursor:${SNAP_MODE ? "default" : "pointer"}" ${title}>${esc(label)}</span></td>`;
     }
     if (key === "product") return `<td><span class="tag-prod">${esc(disp(r, key))}</span></td>`;
     if (key === "note") {
@@ -1664,13 +1752,6 @@ function renderPagination(total) {
 }
 
 /* ============ 整体小结（按品种分别总结；固定统计「本周」） ============ */
-const REASON_KEYS = ["delay", "dropout_effect", "dropout_recover", "dropout_adr", "dropout_econ", "dropout_other", "channel", "fuFail", "prolong", "switch"];
-const REASON_LABEL = {
-  delay: "延迟用药", dropout_effect: "脱落·效果不佳", dropout_recover: "脱落·自觉好转",
-  dropout_adr: "脱落·不良反应", dropout_econ: "脱落·经济", dropout_other: "脱落·其他",
-  channel: "转渠道", fuFail: "随访失败未探寻原因", prolong: "医嘱延长", switch: "换药",
-};
-
 // 计算某品种的「本周」小结统计（固定按本周，口径与周维度状态机完全一致）
 //   本周 = 参考日期所在自然周（周一~周日完整周，与状态机「本周」相同）
 //   应回购（总集）= 应回未回（应购日∈本周未购）+ 应回已回（当周购药，含提前购药者）
@@ -1693,10 +1774,10 @@ function buildSummaryStats(fam) {
     (pat[k] = pat[k] || { name: s.patient_name || "", phone: s.phone || "", dates: [] }).dates.push(s.sales_time);
   }
   const cycleOf = p => STORE.cycles[p.name || p.phone] || state.stdCycle[fam] || 30;
-  const dueKeys = new Set();    // 本周应购（下次应购日∈本周）
-  const boughtKeys = new Set(); // 本周实际购药（当周有购药记录）
-  const notBoughtKeys = [];     // 应购未购
-  const nextKeys = [];          // 下周应购（下次应购日∈下周）
+  const boughtKeys = new Set();     // 本周实际购药（当周有购药记录）
+  const notBoughtKeys = [];         // 应回未回（下次应购日∈本周 且 未购）
+  const overdueKeys = [];           // 已逾期（下次应购日<周首 且 未购）—— 未购药原因统计范围之二
+  const nextKeys = [];              // 下周应购（下次应购日∈下周）
   for (const k in pat) {
     const p = pat[k];
     p.dates.sort();
@@ -1704,21 +1785,26 @@ function buildSummaryStats(fam) {
     const nextDue = addDays(p.dates[p.dates.length - 1], cyc);
     const boughtThisWeek = p.dates.some(d => inP(d, W.start, W.end));
     if (boughtThisWeek) boughtKeys.add(k);
-    if (inP(nextDue, W.start, W.end)) {
-      dueKeys.add(k);
-      if (!boughtThisWeek) notBoughtKeys.push(k);
-    }
+    else if (inP(nextDue, W.start, W.end)) notBoughtKeys.push(k);
+    else if (nextDue < W.start) overdueKeys.push(k);
     if (inP(nextDue, nStart, nEnd)) nextKeys.push(k);
   }
-  // 未购药原因：用全量行的最近随访自动判定
+  // 未购药原因：统计「应回未回 + 已逾期」患者的未购药原因标注（原因列人工点选/自动判定预填）
+  // 父类人数 = 其子类人数之和（按用户维护的分类树）
   const rowMap = {};
   for (const r of ALL_ROWS) rowMap[r._key + "|" + r.product] = r;
-  const cnt = Object.fromEntries(REASON_KEYS.map(k => [k, 0]));
-  for (const k of notBoughtKeys) {
+  const treeKeys = flattenReasonTree(state.reasonTree).map(f => f.key);
+  const cnt = Object.fromEntries(treeKeys.map(k => [k, 0]));
+  const reasonScope = notBoughtKeys.concat(overdueKeys);
+  for (const k of reasonScope) {
     const r = rowMap[k + "|" + fam];
-    const c = M.classifyFuReason(r && r._matched);
-    if (c && c.key === "dropout") cnt["dropout_" + (c.detail === "效果不佳" ? "effect" : c.detail === "自觉好转" ? "recover" : c.detail === "不良反应" ? "adr" : c.detail === "经济" ? "econ" : "other")]++;
-    else if (c && cnt[c.key] != null) cnt[c.key]++;
+    if (r && r.reason && cnt[r.reason] != null) cnt[r.reason]++;
+  }
+  // 父类人数 = 子类之和（父类 key 本身不作为标注目标，仅汇总展示）
+  for (const n of state.reasonTree) {
+    if (n.children && n.children.length) {
+      cnt[n.key] = n.children.reduce((s, c) => s + (cnt[c.key] || 0), 0);
+    }
   }
   // 下周预计复购：按随访信号分正常/推迟（脱落不计入复购）
   let normal = 0, postpone = 0;
@@ -1741,21 +1827,27 @@ function buildSummaryStats(fam) {
     cnt, dTotal, nextTotal: nextKeys.length, normal, postpone, postponeReasons: [...postponeReasons] };
 }
 
-// 生成小结文案（原因人数优先取用户人工修正值）
+// 生成小结文案（未购药原因按用户维护的分类树动态生成；父类人数=子类之和）
 function buildSummaryText(fam) {
   const st = buildSummaryStats(fam);
-  const adj = state.fuAdj[fam] || {};
-  const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
-  const dEff = v("dropout_effect", st.cnt.dropout_effect);
-  const dRec = v("dropout_recover", st.cnt.dropout_recover);
-  const dAdr = v("dropout_adr", st.cnt.dropout_adr);
-  const dEco = v("dropout_econ", st.cnt.dropout_econ);
-  const dOth = v("dropout_other", st.cnt.dropout_other);
-  const dTot = dEff + dRec + dAdr + dEco + dOth;
+  // 第 2 行：按维护树顺序生成「①延迟用药X人、②脱落X人（效果不佳X/自觉好转X/…）、③转渠道X人…」
+  const parts = [];
+  let idx = 1;
+  const cn = ["", "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮"];
+  for (const n of state.reasonTree) {
+    const parentCnt = st.cnt[n.key] || 0;
+    if (n.children && n.children.length) {
+      const sub = n.children.map(c => `${c.label}${st.cnt[c.key] || 0}`).join("/");
+      parts.push(`${cn[idx] || (idx + ".")}${n.label}${parentCnt}人（${sub}）`);
+    } else {
+      parts.push(`${cn[idx] || (idx + ".")}${n.label}${parentCnt}人`);
+    }
+    idx++;
+  }
   const lines = [];
   lines.push(`本周小结（${fam}）：`);
   lines.push(`1. 本周应回购 ${st.due} 人（应回已回 ${st.bought} 人、应回未回 ${st.notBought} 人）；`);
-  lines.push(`2. 未购药原因：①延迟用药${v("delay", st.cnt.delay)}人、②脱落${dTot}人（效果不佳${dEff}/自觉好转${dRec}/不良反应${dAdr}/经济${dEco}/其他${dOth}）、③转渠道${v("channel", st.cnt.channel)}人、④随访失败未探寻原因${v("fuFail", st.cnt.fuFail)}人、⑤医嘱延长${v("prolong", st.cnt.prolong)}人、⑥换药${v("switch", st.cnt.switch)}人；`);
+  lines.push(`2. 未购药原因：${parts.join("、")}；`);
   const pReasons = st.postponeReasons.length ? `（${st.postponeReasons.slice(0, 5).join("、")}）` : "";
   lines.push(`4. 下周预计复购 ${st.normal + st.postpone} 人，预计正常回购 ${st.normal} 人，推迟 ${st.postpone} 人${pReasons}`);
   SUMMARY.text = lines.join("\n");
@@ -1792,28 +1884,16 @@ function renderSummaryPanel() {
   if (state.hospitals.size) scope.push("医院" + state.hospitals.size + "家");
   if (state.pharmacies.size) scope.push("药房" + state.pharmacies.size + "家");
   $("#periodFixedLabel").textContent = `本周：${W0.start} ~ ${W0.end}` + (scope.length ? `（已按 ${scope.join("、")} 统计）` : "");
-  // 文案 + 原因修正输入
-  const { text, st } = buildSummaryText(state.selFam);
+  // 文案
+  const { text } = buildSummaryText(state.selFam);
   $("#summaryText").textContent = text;
-  const adj = state.fuAdj[state.selFam] || {};
-  const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
-  $("#summaryAdjust").innerHTML =
-    `<span class="sa-lbl">未购药原因（自动判定，可修改）：</span>` +
-    REASON_KEYS.map(k =>
-      `<span class="sa-item" data-k="${k}"><span class="sa-name">${REASON_LABEL[k]}</span>` +
-      `<input type="number" class="sa-num" min="0" value="${v(k, st.cnt[k] || 0)}"></span>`).join("");
-  document.querySelectorAll("#summaryAdjust .sa-num").forEach(inp => {
-    inp.addEventListener("change", () => {
-      const item = inp.closest(".sa-item");
-      if (!item) return;
-      const k = item.dataset.k;
-      const n = Math.max(0, parseInt(inp.value, 10) || 0);
-      (state.fuAdj[state.selFam] = state.fuAdj[state.selFam] || {})[k] = n;
-      renderSummaryPanel();
-    });
-    if (SNAP_MODE) inp.disabled = true;
-  });
-  $("#summaryAdjust").classList.toggle("hidden", SNAP_MODE);
+  // 管理分类（维护小结分类树；未购药原因列选项跟随）
+  const mgrBtn = $("#manageReasonBtn");
+  if (SNAP_MODE) mgrBtn.classList.add("hidden");
+  else {
+    mgrBtn.classList.remove("hidden");
+    mgrBtn.onclick = () => { $("#reasonManager").classList.toggle("hidden"); renderReasonManager(); };
+  }
   // 复制
   const copyBtn = $("#copySummaryBtn");
   if (SNAP_MODE) copyBtn.classList.add("hidden");
@@ -1828,6 +1908,86 @@ function renderSummaryPanel() {
     }
   };
   // 周期固定为「本周」，无切换控件
+}
+
+/* ============ 未购药原因分类维护（小结分类树；原因列选项跟随） ============ */
+function findReason(tree, key) {
+  for (const n of tree) {
+    if (n.key === key) return n;
+    const c = (n.children || []).find(x => x.key === key);
+    if (c) return c;
+  }
+  return null;
+}
+function genReasonKey() { return "r" + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36); }
+function addReason(label) { state.reasonTree.push({ key: genReasonKey(), label, children: [] }); }
+function addReasonChild(parentKey, label) {
+  const p = state.reasonTree.find(n => n.key === parentKey);
+  if (p) (p.children = p.children || []).push({ key: genReasonKey(), label, children: [] });
+}
+function renameReason(key, label) { const n = findReason(state.reasonTree, key); if (n) n.label = label; }
+function removeReason(key) {
+  // 删除节点（连带其子类），并清理已标注该分类的患者标注
+  state.reasonTree = state.reasonTree.filter(n => n.key !== key)
+    .map(n => Object.assign({}, n, { children: (n.children || []).filter(c => c.key !== key) }));
+  const flat = flattenReasonTree(state.reasonTree).map(f => f.key);
+  for (const rk in STORE.reasonOverrides) {
+    if (!flat.includes(STORE.reasonOverrides[rk])) delete STORE.reasonOverrides[rk];
+  }
+}
+function renderReasonManager() {
+  const box = $("#reasonManagerList");
+  const rows = [];
+  state.reasonTree.forEach(n => {
+    rows.push(`<div class="rm-row">
+      <span class="rm-name">${esc(n.label)}</span>
+      <span class="rm-acts">
+        <a data-act="addchild" data-key="${esc(n.key)}">加子类</a>
+        <a data-act="rename" data-key="${esc(n.key)}">改名</a>
+        <a data-act="del" data-key="${esc(n.key)}">删除</a>
+      </span></div>`);
+    (n.children || []).forEach(c => {
+      rows.push(`<div class="rm-row rm-child">
+        <span class="rm-name">${esc(c.label)}</span>
+        <span class="rm-acts">
+          <a data-act="rename" data-key="${esc(c.key)}">改名</a>
+          <a data-act="del" data-key="${esc(c.key)}">删除</a>
+        </span></div>`);
+    });
+  });
+  box.innerHTML = rows.join("");
+  box.querySelectorAll("a[data-act]").forEach(a => a.onclick = () => {
+    const act = a.dataset.act, key = a.dataset.key;
+    if (act === "addchild") {
+      const label = prompt("新子类名称：");
+      if (!label) return;
+      addReasonChild(key, label.trim());
+    } else if (act === "rename") {
+      const cur = findReason(state.reasonTree, key);
+      const label = prompt("新的分类名称：", cur ? cur.label : "");
+      if (!label) return;
+      renameReason(key, label.trim());
+    } else if (act === "del") {
+      const cur = findReason(state.reasonTree, key);
+      if (!confirm(`删除分类「${cur ? cur.label : key}」？（已标注该分类的患者将回到未标）`)) return;
+      removeReason(key);
+    }
+    renderReasonManager();
+    refresh();
+  });
+  $("#reasonManagerAdd").onclick = () => {
+    const label = prompt("新增分类名称：");
+    if (!label) return;
+    addReason(label.trim());
+    renderReasonManager();
+    refresh();
+  };
+  $("#reasonManagerReset").onclick = () => {
+    if (!confirm("恢复默认分类？自定义修改将丢失。")) return;
+    state.reasonTree = cloneReasonTree(DEFAULT_REASON_TREE);
+    renderReasonManager();
+    refresh();
+  };
 }
 
 async function refresh() {
@@ -1961,14 +2121,14 @@ renderPendingList();
 
 $("#clearAllBtn").onclick = () => {
   if (!confirm("确定清空全部已加载数据？")) return;
-  STORE.sales = []; STORE.followups = []; STORE.cycles = {}; STORE.files = []; STORE.notes = {}; STORE.subOverrides = {};
+  STORE.sales = []; STORE.followups = []; STORE.cycles = {}; STORE.files = []; STORE.notes = {}; STORE.reasonOverrides = {};
   CURRENT = { summary: null }; DATA = { rows: [] };
   $("#board").classList.add("hidden");
 };
 
 /* ============ 筛选交互 ============ */
 $("#clearBtn").onclick = () => {
-  state.cats.clear(); state.subs.clear(); state.repurParts.clear(); state.products.clear(); state.hospitals.clear(); state.pharmacies.clear(); state.executors.clear();
+  state.cats.clear(); state.reasons.clear(); state.repurParts.clear(); state.products.clear(); state.hospitals.clear(); state.pharmacies.clear(); state.executors.clear();
   state.weekSel = "this"; state.refDate = "";
   state.q = "";
   $("#searchInput").value = "";
@@ -2119,19 +2279,14 @@ const EXPORT_REPUR_STYLE = {
   "应回未回": { fill: "FFFCEBEB", font: "FF791F1F" },
   "应回已回": { fill: "FFEAF3DE", font: "FF27500A" },
 };
-const EXPORT_SUB_STYLE = {
-  "正常状态": { fill: "FFEAF3DE", font: "FF27500A" },
-  "预判延期": { fill: "FFFAEEDA", font: "FF633806" },
-  "已脱落": { fill: "FFF1EFE8", font: "FF444441" },
-};
 
 async function doExport(desen) {
   const rows = DATA.rows;
   if (!rows.length) { alert("当前筛选无数据可导出"); return; }
   const header = LIST_COLS.map(([, l]) => l).concat(["随访小结"]);
-  // 列索引（用于着色）：状态=status、下钻=substatus、距今天数=days_to_due、随访信号=fu_signal
+  // 列索引（用于着色）：状态=status、未购药原因=reason、距今天数=days_to_due、随访信号=fu_signal
   const idxStatus = LIST_COLS.findIndex(([k]) => k === "status");
-  const idxSub = LIST_COLS.findIndex(([k]) => k === "substatus");
+  const idxReason = LIST_COLS.findIndex(([k]) => k === "reason");
   const idxDays = LIST_COLS.findIndex(([k]) => k === "days_to_due");
   const idxSig = LIST_COLS.findIndex(([k]) => k === "fu_signal");
   const EXPORT_SIG_FONT = { normal: "FF0F9D6B", nonstd: "FFE8590C", dropout: "FFE03131" };
@@ -2151,6 +2306,12 @@ async function doExport(desen) {
     const vals = LIST_COLS.map(([k]) => {
       if (k === "note") return STORE.notes[noteKey(r)] || "";
       if (k === "status") return r.status + (r.repur_part ? "·" + r.repur_part : ""); // 应回购细分并入状态列
+      if (k === "reason") {
+        // 未购药原因：标注分类 / 无标注按状态占位（与展示一致）
+        if (r.reason) return reasonLabel(state.reasonTree, r.reason) || r.reason;
+        if (r.repur_part === "应回已回") return "已购药";
+        return "";
+      }
       if (k === "patient_name") return desen ? maskName(r.patient_name) : (r.patient_name || "");
       if (k === "phone") return desen ? maskPhone(r.phone) : (r.phone || "");
       if (k === "physician") return desen ? maskDoctor(r.physician) : (r.physician || "");
@@ -2168,11 +2329,9 @@ async function doExport(desen) {
       row.getCell(idxStatus + 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: st.fill } };
       row.getCell(idxStatus + 1).font = { bold: true, color: { argb: st.font } };
     }
-    // 下钻列：浅色填充 + 深色字（仅应回购有值）
-    const sb = r.substatus ? EXPORT_SUB_STYLE[r.substatus] : null;
-    if (idxSub >= 0 && sb) {
-      row.getCell(idxSub + 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: sb.fill } };
-      row.getCell(idxSub + 1).font = { color: { argb: sb.font } };
+    // 未购药原因列：有标注橙色着色
+    if (idxReason >= 0 && r.reason) {
+      row.getCell(idxReason + 1).font = { bold: true, color: { argb: "FFE8590C" } };
     }
     // 距今天数：逾期标红加粗
     if (idxDays >= 0 && typeof r.days_to_due === "number" && r.days_to_due < 0) {
@@ -2216,19 +2375,19 @@ async function doSnapshot(desen) {
       return c;
     });
     const snap = {
-      desen, rows, notes: STORE.notes, subOverrides: STORE.subOverrides,
+      desen, rows, notes: STORE.notes, reasonOverrides: STORE.reasonOverrides,
       summary: CURRENT.summary, state: {
         weekSel: state.weekSel, refDate: state.refDate,
         stdCycle: state.stdCycle, pageSize: state.pageSize,
         q: state.q,
-        cats: [...state.cats], subs: [...state.subs], repurParts: [...state.repurParts],
+        cats: [...state.cats], reasons: [...state.reasons], repurParts: [...state.repurParts],
         products: [...state.products],
         hospitals: [...state.hospitals], pharmacies: [...state.pharmacies], executors: [...state.executors],
         plainName: state.plainName, plainPhone: state.plainPhone, plainDoctor: state.plainDoctor,
         maskMode: state.maskMode,
         hiddenCols: [...state.hiddenCols],
         periodType: state.periodType, periodStart: state.periodStart, periodEnd: state.periodEnd,
-        selFam: state.selFam, fuAdj: state.fuAdj,
+        selFam: state.selFam, reasonTree: state.reasonTree,
       },
       summaryText: SUMMARY.text,
       buildAt: new Date().toISOString(),
@@ -2273,7 +2432,7 @@ function loadSnapshot(snap) {
   DATA.rows = SNAP_BASE.slice();
   CURRENT.summary = snap.summary || buildSummary(DATA.rows);
   STORE.notes = snap.notes || {};
-  STORE.subOverrides = snap.subOverrides || {};
+  STORE.reasonOverrides = snap.reasonOverrides || {};
   const s = snap.state || {};
   state.weekSel = s.weekSel || "this";
   state.refDate = s.refDate || "";
@@ -2283,7 +2442,7 @@ function loadSnapshot(snap) {
   renderCycleInputs();
   state.q = s.q || "";
   state.cats = new Set(s.cats || []);
-  state.subs = new Set(s.subs || []);
+  state.reasons = new Set(s.reasons || []);
   state.repurParts = new Set(s.repurParts || []);
   state.products = new Set(s.products || []);
   state.hospitals = new Set(s.hospitals || []);
@@ -2296,7 +2455,7 @@ function loadSnapshot(snap) {
   state.periodType = s.periodType || "7d";
   state.periodStart = s.periodStart || ""; state.periodEnd = s.periodEnd || "";
   state.selFam = s.selFam || "";
-  state.fuAdj = s.fuAdj || {};
+  if (s.reasonTree) state.reasonTree = cloneReasonTree(s.reasonTree);
   SUMMARY.text = snap.summaryText || "";
   // 上传区隐藏
   ["#dropAll", "#pendingPanel"].forEach(id => $(id).classList.add("hidden"));
@@ -2322,7 +2481,7 @@ function loadSnapshot(snap) {
   renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
 })();
 
 </script>

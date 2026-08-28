@@ -129,13 +129,38 @@ function assert(cond, msg) {
   assert(text.includes('①延迟用药1人、②脱落1人（效果不佳1/自觉好转0/不良反应0/经济0/其他0）、③转渠道1人、④随访失败未探寻原因1人、⑤医嘱延长1人、⑥换药1人'), '第2行原因正确');
   assert(text.includes('4. 下周预计复购 2 人，预计正常回购 1 人，推迟 1 人') && text.includes('出差'), '第4行下周预计+推迟原因');
 
-  console.log('\n===== ④ 人工修正 =====');
-  App.state.fuAdj['百泽安'] = { delay: 3 };
+  console.log('\n===== ④ 患者标注驱动统计（明细点选原因 → 小结跟随） =====');
+  // 将「庚」（原自动判定=换药）在原因列覆盖为「延迟用药」→ 延迟用药 1→2、换药 1→0
+  App.STORE.reasonOverrides['10000000007::百泽安'] = 'delay';
+  await App.refresh(); // 重建全量行（行 reason = 人工覆盖优先）
+  const stD = App.buildSummaryStats('百泽安');
+  assert(stD.cnt.delay === 2 && stD.cnt.switch === 0, `覆盖庚为延迟用药 → delay2/switch0（实际 ${stD.cnt.delay}/${stD.cnt.switch}）`);
   const text2 = App.buildSummaryText('百泽安').text;
-  assert(text2.includes('①延迟用药3人'), `人工修正后延迟用药 3 人`);
-  App.state.fuAdj['百泽安'] = {};
+  assert(text2.includes('①延迟用药2人') && text2.includes('⑥换药0人'), '小结文案跟随原因标注变化');
+  App.STORE.reasonOverrides = {}; await App.refresh();
 
-  console.log('\n===== ⑤ 固定本周：不受周期控件影响 =====');
+  console.log('\n===== ⑤ 分类维护：新增/删除分类 → 文案与标注跟随 =====');
+  // 新增平级分类
+  App.addReason('新分类X');
+  let textN = App.buildSummaryText('百泽安').text;
+  assert(textN.includes('⑦新分类X0人'), `新增分类 → 文案出现第⑦项（实际: ${textN.split('\n')[2]}）`);
+  // 给「庚」标注新分类 → 统计 1 人
+  const newKey = App.state.reasonTree[App.state.reasonTree.length - 1].key;
+  App.STORE.reasonOverrides['10000000007::百泽安'] = newKey;
+  await App.refresh();
+  const stN = App.buildSummaryStats('百泽安');
+  assert(stN.cnt[newKey] === 1, `新分类标注统计 1 人（实际 ${stN.cnt[newKey]}）`);
+  // 删除该分类 → 标注清理 + 文案移除
+  App.removeReason(newKey); await App.refresh();
+  textN = App.buildSummaryText('百泽安').text;
+  assert(!textN.includes('新分类X'), '删除分类后文案移除');
+  assert(App.STORE.reasonOverrides['10000000007::百泽安'] === undefined, '删除分类后患者标注清理');
+  // 恢复默认树
+  App.state.reasonTree = App.cloneReasonTree(App.DEFAULT_REASON_TREE); await App.refresh();
+  const textR = App.buildSummaryText('百泽安').text;
+  assert(textR.includes('⑥换药1人'), '恢复默认后文案还原');
+
+  console.log('\n===== ⑥ 固定本周：不受周期控件影响 =====');
   // 用户确认：小结固定按「本周」，不随近7天/自定义选项变化
   App.state.periodType = '7d';
   const stA = App.buildSummaryStats('百泽安');

@@ -34,11 +34,11 @@ const App = global.AppCore;
     { _key: '13800001111', product: '百泽安', patient_name: '张三', phone: '13800001111', physician: '李医生',
       hospital: '人民医院', pharmacy: '药房A', last_purchase: '2026-08-01', cycle_days: 21, due_date: '2026-08-22',
       days_to_due: 2, fu_time: '2026-08-15', fu_type: '复购确认随访任务', executor: '刘倩', fu_note: '患者表示会按时购药',
-      fu_signal: '', status: '应回购', substatus: '正常状态' },
+      fu_signal: '', status: '应回购', repur_part: '应回未回', reason: 'delay' },
     { _key: '13900002222', product: '百悦泽', patient_name: '李四', phone: '13900002222', physician: '王医生',
       hospital: '中医院', pharmacy: '药房B', last_purchase: '2026-07-01', cycle_days: 28, due_date: '2026-07-29',
       days_to_due: -5, fu_time: '2026-07-20', fu_type: '日常随访任务', executor: '高金敏', fu_note: '',
-      fu_signal: '未按时购药', status: '已逾期', substatus: '' },
+      fu_signal: '未按时购药', status: '已逾期', reason: '' },
   ];
   await App.doExport(true); // 脱敏导出
   if (!captured) throw new Error('未捕获到导出 Blob');
@@ -60,13 +60,13 @@ const App = global.AppCore;
   console.log('[表头] A1=', h1.value, '| 加粗:', h1.font.bold, '| 底色:', h1.fill.fgColor && h1.fill.fgColor.argb, '期望 FFE6F1FB(浅蓝)');
   if (h1.font.bold !== true || (h1.fill.fgColor && h1.fill.fgColor.argb) !== 'FFE6F1FB') throw new Error('表头样式不符');
 
-  // 行2：应回购 / 正常状态
+  // 行2：应回购 / 未购药原因=延迟用药
   const r2 = ws.getRow(2);
-  const idxStatus = 14, idxSub = 15, idxDays = 10; // 与 LIST_COLS 对应（1-based: status=14, substatus=15, days=10）
+  const idxStatus = 14, idxReason = 15, idxDays = 10; // 与 LIST_COLS 对应（1-based: status=14, reason=15, days=10）
   console.log('[行2] 患者=', r2.getCell(1).value, '| 状态列=', r2.getCell(idxStatus).value,
     '| 底色:', r2.getCell(idxStatus).fill.fgColor && r2.getCell(idxStatus).fill.fgColor.argb, '期望 FFFCEBEB(浅红)');
-  console.log('[行2] 下钻列=', r2.getCell(idxSub).value,
-    '| 底色:', r2.getCell(idxSub).fill.fgColor && r2.getCell(idxSub).fill.fgColor.argb, '期望 FFEAF3DE(浅绿)');
+  console.log('[行2] 未购药原因列=', r2.getCell(idxReason).value,
+    '| 字色:', r2.getCell(idxReason).font.color && r2.getCell(idxReason).font.color.argb, '期望 FFE8590C(橙)');
   console.log('[行2] 随访小结=', r2.getCell(lastCol).value);
 
   // 行3：已逾期 + 逾期标红
@@ -78,7 +78,8 @@ const App = global.AppCore;
 
   const ok = r2.getCell(1).value === '张*' &&
     r2.getCell(idxStatus).fill.fgColor.argb === 'FFFCEBEB' &&
-    r2.getCell(idxSub).fill.fgColor.argb === 'FFEAF3DE' &&
+    r2.getCell(idxReason).value === '延迟用药' &&
+    r2.getCell(idxReason).font.color.argb === 'FFE8590C' &&
     r3.getCell(idxStatus).fill.fgColor.argb === 'FFFAEEDA' &&
     r3.getCell(idxDays).font.color.argb === 'FFE03131';
   console.log(ok ? '\n✅ 导出内容 + 浅色样式验证通过' : '\n❌ 校验失败');

@@ -53,7 +53,7 @@ function assert(cond, msg) {
   }
   function run(salesArr, fus, cycles) {
     App.STORE.sales = salesArr; App.STORE.followups = fus || []; App.STORE.cycles = cycles || {};
-    App.STORE.subOverrides = {};
+    App.STORE.reasonOverrides = {};
     return App.buildRows()[0];
   }
 
@@ -61,18 +61,18 @@ function assert(cond, msg) {
   // 场景1：应购 08-24（本周一，∈本周）→ 应回购 / 随访正常 → 正常状态
   let r = run([sales('甲', '10000000001', '2026-08-03', '百泽安')],
     [fu('甲', '10000000001', '2026-08-10', '百泽安', null)], {});
-  console.log('1 应购本周一:', r.status, '/', r.repur_part, '/', r.substatus, '| 应购日', r.due_date);
-  assert(r.status === '应回购' && r.repur_part === '应回未回' && r.substatus === '正常状态', '场景1 应购日∈本周未购→应回购·应回未回/正常状态');
+  console.log('1 应购本周一:', r.status, '/', r.repur_part, '| reason:', r.reason || '(空)', '| 应购日', r.due_date);
+  assert(r.status === '应回购' && r.repur_part === '应回未回' && r.reason === '', '场景1 应购日∈本周未购→应回购·应回未回/无原因标注');
 
-  // 场景2：应购日∈本周 + 随访停药 → 应回购·应回未回 / 已脱落
+  // 场景2：应购日∈本周 + 随访停药 → 应回购·应回未回 / 自动判定原因=脱落·其他
   r = run([sales('乙', '10000000002', '2026-08-03', '百泽安')],
     [fu('乙', '10000000002', '2026-08-10', '百泽安', 'dropout')], {});
-  assert(r.status === '应回购' && r.repur_part === '应回未回' && r.substatus === '已脱落', '场景2 应购日∈本周+停药→已脱落');
+  assert(r.status === '应回购' && r.repur_part === '应回未回' && r.reason === 'dropout_other', '场景2 应购日∈本周+停药→原因自动预填脱落·其他');
 
-  // 场景3：应购日∈本周 + 随访推迟 → 应回购·应回未回 / 预判延期
+  // 场景3：应购日∈本周 + 随访推迟 → 应回购·应回未回 / 自动判定原因=延迟用药
   r = run([sales('丙', '10000000003', '2026-08-03', '百泽安')],
     [fu('丙', '10000000003', '2026-08-10', '百泽安', 'nonstd')], {});
-  assert(r.status === '应回购' && r.repur_part === '应回未回' && r.substatus === '预判延期', '场景3 应购日∈本周+推迟→预判延期');
+  assert(r.status === '应回购' && r.repur_part === '应回未回' && r.reason === 'delay', '场景3 应购日∈本周+推迟→原因自动预填延迟用药');
 
   // 场景4：应购日 < 周首（本周无购药）→ 已逾期
   r = run([sales('丁', '10000000004', '2026-07-20', '百泽安')], [], {});
@@ -163,35 +163,35 @@ function assert(cond, msg) {
   r = App.buildRows()[0];
   assert(r.status === '已逾期', '场景14b 参考日期恢复今天→应购日<本周一→已逾期');
 
-  console.log('\n===== 用户手动 override 子状态 =====');
+  console.log('\n===== 用户手动 override 未购药原因 =====');
   App.state.refDate = '2026-08-28';
   r = run([sales('甲', '10000000001', '2026-08-03', '百泽安')],
     [fu('甲', '10000000001', '2026-08-10', '百泽安', null)], {});
-  App.STORE.subOverrides['10000000001::百泽安'] = '预判延期';
+  App.STORE.reasonOverrides['10000000001::百泽安'] = 'delay';
   r = App.buildRows()[0];
-  assert(r.status === '应回购' && r.substatus === '预判延期', 'override子状态');
+  assert(r.status === '应回购' && r.reason === 'delay', 'override 未购药原因 → delay');
 
   // 备注窗口：仅 应回购/已逾期 可填（应回已回也属「应回购」）
   const canNote = (x) => x === '应回购' || x === '已逾期';
   assert(canNote('应回购') && canNote('已逾期') && !canNote('应回已回') && !canNote('未到期'),
     '备注窗口条件');
 
-  console.log('\n===== 下钻扩展到所有状态 =====');
-  // 已逾期 + 停药信号 → 下钻「已脱落」
+  console.log('\n===== 未购药原因自动判定（所有状态） =====');
+  // 已逾期 + 停药信号 → 自动判定原因=脱落·其他
   r = run([sales('卯', '10000000015', '2026-07-01', '百泽安')],
     [fu('卯', '10000000015', '2026-07-10', '百泽安', 'dropout')], {});
-  assert(r.status === '已逾期' && r.substatus === '已脱落', `已逾期+停药 → 已脱落（实际 ${r.status}/${r.substatus}）`);
-  // 未到期 + 推迟信号 → 下钻「预判延期」
+  assert(r.status === '已逾期' && r.reason === 'dropout_other', `已逾期+停药 → 原因脱落·其他（实际 ${r.status}/${r.reason}）`);
+  // 未到期 + 推迟信号 → 自动判定原因=延迟用药
   r = run([sales('辰', '10000000016', '2026-08-03', '百泽安')],
     [fu('辰', '10000000016', '2026-08-06', '百泽安', 'nonstd')], { "辰": 30 });
-  assert(r.status === '未到期' && r.substatus === '预判延期', `未到期+推迟 → 预判延期（实际 ${r.status}/${r.substatus}）`);
-  // 应回已回 + 正常信号 → 下钻「正常状态」
+  assert(r.status === '未到期' && r.reason === 'delay', `未到期+推迟 → 原因延迟用药（实际 ${r.status}/${r.reason}）`);
+  // 应回已回 + 正常随访 → 无原因标注（已购药）
   r = run([sales('巳', '10000000017', '2026-08-25', '百泽安')],
     [fu('巳', '10000000017', '2026-08-25', '百泽安', null)], {});
-  assert(r.status === '应回购' && r.repur_part === '应回已回' && r.substatus === '正常状态', `应回已回+正常 → 正常状态（实际 ${r.status}/${r.repur_part}/${r.substatus}）`);
-  // 无随访（unknown）→ 默认「正常状态」
+  assert(r.status === '应回购' && r.repur_part === '应回已回' && r.reason === '', `应回已回+正常 → 无原因（实际 ${r.status}/${r.repur_part}/${r.reason}）`);
+  // 无随访（unknown）→ 无原因标注
   r = run([sales('午', '10000000018', '2026-08-25', '百泽安')], [], {});
-  assert(r.status === '应回购' && r.repur_part === '应回已回' && r.substatus === '正常状态', `无随访 → 默认正常状态（实际 ${r.status}/${r.repur_part}/${r.substatus}）`);
+  assert(r.status === '应回购' && r.repur_part === '应回已回' && r.reason === '', `无随访 → 无原因（实际 ${r.status}/${r.repur_part}/${r.reason}）`);
 
   console.log('\n✅ 状态分类单测全部通过');
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

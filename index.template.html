@@ -255,12 +255,19 @@
     border-radius:10px;padding:12px 14px}
   .sp-adjust{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
   .sp-adjust.hidden{display:none}
-  .sa-lbl{font-size:12px;color:var(--muted);font-weight:600}
-  .sa-item{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--line);
-    border-radius:8px;padding:3px 8px}
-  .sa-name{font-size:12px;color:var(--text)}
-  .sa-num{width:44px;font-size:12px;padding:3px 5px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text)}
-  .sa-num:disabled{background:var(--gray-bg);color:var(--muted)}
+  /* 分类维护面板 */
+  .reason-manager{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px}
+  .reason-manager.hidden{display:none}
+  .rm-head{font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
+  .rm-hint{font-size:12px;font-weight:400;color:var(--muted);margin-left:8px}
+  .rm-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  .rm-row{display:flex;align-items:center;justify-content:space-between;font-size:13px;
+    background:var(--brand-soft);border:1px solid var(--line);border-radius:6px;padding:4px 10px}
+  .rm-row.rm-child{margin-left:26px;background:#fff}
+  .rm-acts{display:inline-flex;gap:10px}
+  .rm-acts a{font-size:12px;color:var(--brand);cursor:pointer}
+  .rm-acts a[data-act="del"]{color:#e03131}
+  .rm-foot{display:flex;gap:8px}
 </style>
 </head>
 <body>
@@ -305,13 +312,13 @@
 
     <!-- 状态统计 -->
     <div class="filter-section">
-      <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」= 应回未回 + 应回已回（细分可点选）；下钻：正常状态 / 预判延期 / 已脱落（所有患者按随访信号标注，点标签可手动切换）；计数随品种/医院/随访人等筛选变化</span></div>
+      <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」= 应回未回 + 应回已回（细分可点选）；「未购药原因」列点击可为患者标注原因（自动判定预填，可覆盖），小结自动汇总，分类可点「管理分类」维护；计数随品种/医院/药房等筛选变化</span></div>
       <div class="summary" id="summary"></div>
       <div class="subtype-bar hidden" id="repurPartBar"></div>
-      <div class="subtype-bar hidden" id="substatusBar"></div>
+      <div class="subtype-bar hidden" id="reasonBar"></div>
     </div>
 
-    <!-- 整体小结（按品种分别总结，固定统计「本周」，原因可人工修正） -->
+    <!-- 整体小结（按品种分别总结，固定统计「本周」；未购药原因=患者明细标注汇总，分类可维护） -->
     <div class="summary-panel hidden" id="summaryPanel">
       <div class="sp-head">
         <b>整体小结</b>
@@ -324,11 +331,21 @@
             <span class="sp-lbl">品种</span>
             <span class="sp-chips" id="summaryFamChips"></span>
           </span>
+          <button class="btn ghost sm" id="manageReasonBtn">管理分类</button>
           <button class="btn ghost sm" id="copySummaryBtn">复制小结</button>
         </span>
       </div>
       <pre class="sp-text" id="summaryText"></pre>
       <div class="sp-adjust hidden" id="summaryAdjust"></div>
+      <!-- 分类维护面板（未购药原因分类树：增删改/加子类/恢复默认；原因列选项与小结文案跟随） -->
+      <div class="reason-manager hidden" id="reasonManager">
+        <div class="rm-head">未购药原因分类维护<span class="rm-hint">修改后「未购药原因」列选项与小结文案同步更新</span></div>
+        <div class="rm-list" id="reasonManagerList"></div>
+        <div class="rm-foot">
+          <button class="btn ghost sm" id="reasonManagerAdd">+ 新增分类</button>
+          <button class="btn ghost sm" id="reasonManagerReset">恢复默认</button>
+        </div>
+      </div>
     </div>
 
     <!-- 判定配置：时间（周视图）+ 标准周期 -->
