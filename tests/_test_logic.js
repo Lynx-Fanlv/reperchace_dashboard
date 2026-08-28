@@ -152,5 +152,22 @@ function assert(cond, msg) {
   assert(canNote('应回购') && canNote('已逾期') && !canNote('已回购') && !canNote('未到期'),
     '备注窗口条件');
 
+  console.log('\n===== 下钻扩展到所有状态 =====');
+  // 已逾期 + 停药信号 → 下钻「已脱落」
+  r = run([sales('子', '10000000012', daysAgo(40), '百泽安')],
+    [fu('子', '10000000012', daysAgo(30), '百泽安', 'dropout')], {});
+  assert(r.status === '已逾期' && r.substatus === '已脱落', `已逾期+停药 → 已脱落（实际 ${r.status}/${r.substatus}）`);
+  // 未到期 + 推迟信号 → 下钻「预判延期」
+  r = run([sales('丑', '10000000013', daysAgo(10), '百泽安')],
+    [fu('丑', '10000000013', daysAgo(6), '百泽安', 'nonstd')], { "丑": 30 });
+  assert(r.status === '未到期' && r.substatus === '预判延期', `未到期+推迟 → 预判延期（实际 ${r.status}/${r.substatus}）`);
+  // 已回购 + 正常信号 → 下钻「正常状态」
+  r = run([sales('寅', '10000000014', daysAgo(1), '百泽安')],
+    [fu('寅', '10000000014', daysAgo(1), '百泽安', null)], {});
+  assert(r.status === '已回购' && r.substatus === '正常状态', `已回购+正常 → 正常状态（实际 ${r.status}/${r.substatus}）`);
+  // 无随访（unknown）→ 默认「正常状态」
+  r = run([sales('卯', '10000000015', daysAgo(1), '百泽安')], [], {});
+  assert(r.status === '已回购' && r.substatus === '正常状态', `无随访 → 默认正常状态（实际 ${r.status}/${r.substatus}）`);
+
   console.log('\n✅ 状态分类单测全部通过');
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

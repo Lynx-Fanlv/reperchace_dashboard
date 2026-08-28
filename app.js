@@ -226,16 +226,16 @@ function buildRows() {
       //  已逾期：应购日已过（任何逾期天数）
       //  已回购：最近购药日期落在「已回购窗口」内（默认距今≤advance，或落在所选日期范围）
       //  未到期：其余情况
-      // 应回购患者再按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据随访内容，用户可点选手动修正）
+      // 所有患者均按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据随访内容；应回购可点选手动修正，其余状态自动判定）
       const sig = matched ? M.followupSignal(matched) : { signal: "unknown", reason: "" };
       const days = diffDays(dueDate, today); // 正=未来，负=逾期
-      let category, substatus = "";
+      const subKey = k + "::" + fam;
+      const autoSub = sig.signal === "dropout" ? "已脱落"
+                    : sig.signal === "nonstd" ? "预判延期" : "正常状态";
+      let category, substatus = autoSub;
       if (days >= 0 && days <= state.advance) {
         category = "应回购";
-        const auto = sig.signal === "dropout" ? "已脱落"
-                   : sig.signal === "nonstd" ? "预判延期" : "正常状态";
-        const key = k + "::" + fam;
-        substatus = STORE.subOverrides[key] || auto; // 用户点选修正优先
+        substatus = STORE.subOverrides[subKey] || autoSub; // 用户点选修正优先（应回购）
       } else if (days < 0) {
         category = "已逾期";
       } else if (inRepurchaseWindow) {
@@ -360,7 +360,7 @@ function renderSummary(d) {
   const subBar = $("#substatusBar");
   if ((d.by_substatus && Object.keys(d.by_substatus).length)) {
     subBar.classList.remove("hidden");
-    subBar.innerHTML = '<span class="lbl">应回购下钻</span>' + SUBSTATUS.map(k => {
+    subBar.innerHTML = '<span class="lbl">下钻状态</span>' + SUBSTATUS.map(k => {
       const n = d.by_substatus[k] || 0;
       if (!n) return "";
       const act = state.subs.has(k) ? "active" : "";
