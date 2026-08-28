@@ -50,15 +50,26 @@ function assert(cond, msg) {
 
 (async () => {
   // 1. 用真实数据生成全量行，并构造混合状态快照（应回购/已逾期/未到期）
+  const DATA_FILES = [
+    'C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx',
+    'C:/Users/yym/Downloads/随访任务导出 (5).xlsx',
+    'C:/Users/yym/Downloads/患者用药周期表.xlsx',
+  ];
+  const missing = DATA_FILES.filter(p => !fs.existsSync(p));
+  if (missing.length) {
+    console.log('⏭️ 跳过快照筛选回归：样例数据文件不在 Downloads（' +
+      missing.map(p => p.split('/').pop()).join('、') + ' 缺失）');
+    process.exit(0);
+  }
   function fileObj(p, name) {
     const buf = fs.readFileSync(p);
     return { name: name || path.basename(p), size: buf.length,
       async arrayBuffer(){ return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); } };
   }
   const res = await P.processFiles([
-    fileObj('C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx', '销售.xlsx'),
-    fileObj('C:/Users/yym/Downloads/随访任务导出 (5).xlsx', '随访.xlsx'),
-    fileObj('C:/Users/yym/Downloads/患者用药周期表.xlsx', '周期.xlsx'),
+    fileObj(DATA_FILES[0], '销售.xlsx'),
+    fileObj(DATA_FILES[1], '随访.xlsx'),
+    fileObj(DATA_FILES[2], '周期.xlsx'),
   ]);
   App.STORE.sales = res.sales; App.STORE.followups = res.followups; App.STORE.cycles = res.cycles;
   const all = App.buildRows();

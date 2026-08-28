@@ -50,7 +50,7 @@ const state = {
   cats: new Set(), subs: new Set(), products: new Set(), hospitals: new Set(), executors: new Set(),
   start: null, end: null, q: "",
   advance: 7,      // 应回购 = 应购药日前 advance 天内
-  stdCycle: Object.fromEntries(M.PRODUCT_FAMILIES.map(p => [p.family, p.stdCycle])),
+  stdCycle: {},   // 标准周期仅按「上传数据中出现品种」动态生成，不写死内置商品
   plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示
   maskMode: "edge",   // 姓名/医生脱敏方式：edge=首尾保留、first=首字保留、all=全部隐藏
   hiddenCols: new Set(),
@@ -919,13 +919,14 @@ $("#endDate").onchange = e => { state.end = e.target.value || null; state.page =
 $("#advanceNum").onchange = e => { state.advance = Math.max(0, parseInt(e.target.value, 10) || 7); refresh(); };
 // 标准周期维护（周期表未覆盖患者时使用）
 // 标准周期按「数据中出现品种」动态维护：
-// 确保每个出现品种都有标准周期 —— 内置品种族用内置值，新品种默认 30 天（用户可在界面修改）
+// 只对上传数据实际出现的品种补标准周期 —— 内置品种族用内置值，新品种默认 30 天（用户可在界面修改）
+// 数据中未出现的品种一律不显示、不写入
 function ensureStdCycles(products) {
-  for (const p of M.PRODUCT_FAMILIES) {
-    if (state.stdCycle[p.family] == null) state.stdCycle[p.family] = p.stdCycle;
-  }
   for (const fam of products) {
-    if (state.stdCycle[fam] == null) state.stdCycle[fam] = 30;
+    if (state.stdCycle[fam] == null) {
+      const builtin = M.PRODUCT_FAMILIES.find(p => p.family === fam);
+      state.stdCycle[fam] = builtin ? builtin.stdCycle : 30;
+    }
   }
 }
 // 按 state.stdCycle 动态渲染每个品种的周期输入框（可单独修改，即时重算）

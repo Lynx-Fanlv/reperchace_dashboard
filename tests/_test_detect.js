@@ -34,6 +34,12 @@ function fileObj(p) {
     ['C:/Users/yym/Downloads/随访任务导出 (5).xlsx', 'followup'],
     ['C:/Users/yym/Downloads/患者用药周期表.xlsx', 'cycle'],
   ];
+  const missing = cases.filter(([p]) => !fs.existsSync(p));
+  if (missing.length) {
+    console.log('⏭️ 跳过自动分类识别：样例数据文件不在 Downloads（' +
+      missing.map(([p]) => path.basename(p)).join('、') + ' 缺失）');
+    process.exit(0);
+  }
   for (const [p, expect] of cases) {
     const t0 = Date.now();
     const kind = await P.detectFileType(fileObj(p));

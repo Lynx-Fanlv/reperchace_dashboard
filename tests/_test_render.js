@@ -37,16 +37,23 @@ load('mapping.js'); load('pipeline.js'); load('app.js');
 const P = global.Pipeline, App = global.AppCore;
 
 (async () => {
+  const DATA_FILES = [
+    'C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx',
+    'C:/Users/yym/Downloads/随访任务导出 (5).xlsx',
+    'C:/Users/yym/Downloads/患者用药周期表.xlsx',
+  ];
+  const missing = DATA_FILES.filter(p => !fs.existsSync(p));
+  if (missing.length) {
+    console.log('⏭️ 跳过渲染 smoke：样例数据文件不在 Downloads（' +
+      missing.map(p => p.split('/').pop()).join('、') + ' 缺失）');
+    process.exit(0);
+  }
   function fileObj(p, name) {
     const buf = fs.readFileSync(p);
     return { name: name || path.basename(p), size: buf.length,
       async arrayBuffer(){ return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); } };
   }
-  const res = await P.processFiles([
-    fileObj('C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx'),
-    fileObj('C:/Users/yym/Downloads/随访任务导出 (5).xlsx'),
-    fileObj('C:/Users/yym/Downloads/患者用药周期表.xlsx'),
-  ]);
+  const res = await P.processFiles(DATA_FILES.map(p => fileObj(p)));
   App.STORE.sales = res.sales; App.STORE.followups = res.followups; App.STORE.cycles = res.cycles;
 
   // 模拟开始分析里的默认日期范围

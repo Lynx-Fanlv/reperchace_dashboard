@@ -52,11 +52,18 @@ function fileObj(p, name) {
 }
 
 async function main() {
-  const files = [
-    fileObj('C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx'),
-    fileObj('C:/Users/yym/Downloads/随访任务导出 (5).xlsx'),
-    fileObj('C:/Users/yym/Downloads/患者用药周期表.xlsx'),
+  const DATA_FILES = [
+    'C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx',
+    'C:/Users/yym/Downloads/随访任务导出 (5).xlsx',
+    'C:/Users/yym/Downloads/患者用药周期表.xlsx',
   ];
+  const missing = DATA_FILES.filter(p => !fs.existsSync(p));
+  if (missing.length) {
+    console.log('⏭️ 跳过端到端验证：样例数据文件不在 Downloads（' +
+      missing.map(p => p.split('/').pop()).join('、') + ' 缺失）');
+    process.exit(0);
+  }
+  const files = DATA_FILES.map(p => fileObj(p));
   const t0 = Date.now();
   const res = await P.processFiles(files);
   console.log('[解析] 耗时', ((Date.now() - t0) / 1000).toFixed(1) + 's');
