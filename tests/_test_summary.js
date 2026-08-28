@@ -85,9 +85,9 @@ function assert(cond, msg) {
     fu('壬', '10000000009', '2026-08-15', { delay_reason: '出差在外，推迟购药' }),
     fu('癸', '10000000010', '2026-08-15', { follow_note: '患者规范用药' }),
   ];
-  function sales(patient, phone, date) {
-    return { source: 'sales', patient_name: patient, phone, sales_time: date, product: '百泽安',
-      hospital: 'H', pharmacy: 'P', physician: '张' };
+  function sales(patient, phone, date, product, hosp, pharm) {
+    return { source: 'sales', patient_name: patient, phone, sales_time: date, product: product || '百泽安',
+      hospital: hosp || 'H', pharmacy: pharm || 'P', physician: '张' };
   }
   function fu(patient, phone, exec, extra) {
     return Object.assign({ source: 'followup', patient_name: patient, phone, exec_time: exec, plan_time: exec,
@@ -149,6 +149,34 @@ function assert(cond, msg) {
   const stC = App.buildSummaryStats('百泽安');
   assert(stC.start === '2026-08-24' && stC.due === 7, `切上周视图，小结仍统计本周（实际 ${stC.start} 应回购${stC.due}）`);
   App.state.weekSel = 'this'; await App.refresh();
+
+  console.log('\n===== ⑦ 小结跟随医院/药房筛选（需求） =====');
+  // 追加 2 名患者（T1/T2 药房=P2、医院=H2），应购 08-24（本周）
+  App.STORE.sales = S.concat([
+    sales('双', '10000000019', '2026-08-03', '百泽安', 'H2', 'P2'),
+    sales('双', '10000000020', '2026-08-03', '百泽安', 'H2', 'P2'),
+  ]);
+  await App.refresh();
+  const stAll = App.buildSummaryStats('百泽安');
+  assert(stAll.due === 9, `未筛选 应回购 9 人（原7 + P2的2）（实际 ${stAll.due}）`);
+  // 筛选药房 = P → 只统计 P 药房记录（P2 的 2 人排除）
+  App.state.pharmacies.add('P'); await App.refresh();
+  const stP = App.buildSummaryStats('百泽安');
+  assert(stP.due === 7 && stP.notBought === 6, `筛选药房=P → 应回购 7 / 应回未回 6（实际 ${stP.due}/${stP.notBought}）`);
+  // 筛选药房 = P2 → 只统计 P2 的 2 人
+  App.state.pharmacies.clear(); App.state.pharmacies.add('P2'); await App.refresh();
+  const stP2 = App.buildSummaryStats('百泽安');
+  assert(stP2.due === 2 && stP2.notBought === 2, `筛选药房=P2 → 应回购 2 / 应回未回 2（实际 ${stP2.due}/${stP2.notBought}）`);
+  // 筛选医院 = H2（药房不筛）→ P2 的 2 人
+  App.state.pharmacies.clear(); App.state.hospitals.add('H2'); await App.refresh();
+  const stH2 = App.buildSummaryStats('百泽安');
+  assert(stH2.due === 2, `筛选医院=H2 → 应回购 2（实际 ${stH2.due}）`);
+  // filterRows 药房筛选
+  App.state.hospitals.clear(); App.state.pharmacies.add('P2');
+  const fr = App.filterRows(App.buildRows());
+  assert(fr.length === 2 && fr.every(r => r.pharmacy === 'P2'), `filterRows 药房筛选 → 仅 P2 行（实际 ${fr.length}）`);
+  App.state.pharmacies.clear(); App.state.hospitals.clear();
+  App.STORE.sales = S; await App.refresh();
 
   console.log('\n✅ 整体小结测试全部通过');
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

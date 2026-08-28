@@ -51,7 +51,7 @@ let SNAP_BASE = null; // 快照全量行基准（不可变，供快照模式筛�
 
 // 界面状态
 const state = {
-  cats: new Set(), subs: new Set(), repurParts: new Set(), products: new Set(), hospitals: new Set(), executors: new Set(),
+  cats: new Set(), subs: new Set(), repurParts: new Set(), products: new Set(), hospitals: new Set(), pharmacies: new Set(), executors: new Set(),
   q: "",
   weekSel: "this", // 周视图：last=上周 / this=本周 / next=下周（单选，默认本周）
   refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在自然周（周一~周日），可改以回看历史周
@@ -306,6 +306,7 @@ function filterRows(rows, opts) {
   }
   if (state.products.size) rs = rs.filter(r => state.products.has(r.product));
   if (state.hospitals.size) rs = rs.filter(r => state.hospitals.has(r.hospital || "未知"));
+  if (state.pharmacies.size) rs = rs.filter(r => state.pharmacies.has(r.pharmacy || "未知"));
   if (state.executors.size) rs = rs.filter(r => state.executors.has(r.executor || "未知"));
   if (state.q) {
     const ql = state.q.trim().toLowerCase();
@@ -320,17 +321,18 @@ function filterRows(rows, opts) {
 }
 
 function buildSummary(rows) {
-  const by_status = {}, by_substatus = {}, by_repur_part = {}, by_product = {}, by_hospital = {}, by_executor = {}, by_fu_type = {};
+  const by_status = {}, by_substatus = {}, by_repur_part = {}, by_product = {}, by_hospital = {}, by_pharmacy = {}, by_executor = {}, by_fu_type = {};
   for (const r of rows) {
     by_status[r.status] = (by_status[r.status] || 0) + 1;
     if (r.substatus) by_substatus[r.substatus] = (by_substatus[r.substatus] || 0) + 1;
     if (r.repur_part) by_repur_part[r.repur_part] = (by_repur_part[r.repur_part] || 0) + 1;
     by_product[r.product || "未知"] = (by_product[r.product || "未知"] || 0) + 1;
     by_hospital[r.hospital || "未知"] = (by_hospital[r.hospital || "未知"] || 0) + 1;
+    by_pharmacy[r.pharmacy || "未知"] = (by_pharmacy[r.pharmacy || "未知"] || 0) + 1;
     by_executor[r.executor || "未知"] = (by_executor[r.executor || "未知"] || 0) + 1;
     by_fu_type[r.fu_type || "无随访"] = (by_fu_type[r.fu_type || "无随访"] || 0) + 1;
   }
-  return { total: rows.length, by_status, by_substatus, by_repur_part, by_product, by_hospital, by_executor, by_fu_type };
+  return { total: rows.length, by_status, by_substatus, by_repur_part, by_product, by_hospital, by_pharmacy, by_executor, by_fu_type };
 }
 
 /* ============ 渲染 ============ */
@@ -393,6 +395,7 @@ function renderSummary(d) {
   }
   buildMs("prodMs", d.by_product, state.products, "品种");
   buildMs("hospMs", d.by_hospital, state.hospitals, "医院");
+  buildMs("pharmMs", d.by_pharmacy, state.pharmacies, "药房");
   buildMs("execMs", d.by_executor, state.executors, "随访人");
   updateFilterInfo();
 }
@@ -441,6 +444,7 @@ function updateFilterInfo() {
   if (state.subs.size) parts.push("下钻=" + [...state.subs].join("/"));
   if (state.products.size) parts.push("品种=" + state.products.size + "项");
   if (state.hospitals.size) parts.push("医院=" + state.hospitals.size + "项");
+  if (state.pharmacies.size) parts.push("药房=" + state.pharmacies.size + "项");
   if (state.executors.size) parts.push("随访人=" + state.executors.size + "项");
   const W = getWeekRange(state.weekSel);
   parts.push("时间=" + WEEK_LABEL[state.weekSel] + " " + W.start + "~" + W.end);
@@ -625,9 +629,12 @@ function buildSummaryStats(fam) {
   const nStart = addDays(W.end, 1), nEnd = addDays(W.end, 7); // 下周 = 下个自然周
   const inP = (d, s, e) => d && d >= s && d <= e;
   // 按患者×品种聚合购药日期（从销售明细，与状态机同一数据源）
+  // 跟随所选的医院 / 药房筛选（多选=或）：小结统计范围随筛选变化
   const pat = {}; // key -> { name, phone, dates: [] }
   for (const s of STORE.sales) {
     if (s.product !== fam || !s.sales_time) continue;
+    if (state.hospitals.size && !state.hospitals.has(s.hospital || "未知")) continue;
+    if (state.pharmacies.size && !state.pharmacies.has(s.pharmacy || "未知")) continue;
     const k = phoneDigits(s.phone) || s.patient_name || "";
     if (!k) continue;
     (pat[k] = pat[k] || { name: s.patient_name || "", phone: s.phone || "", dates: [] }).dates.push(s.sales_time);
@@ -726,8 +733,12 @@ function renderSummaryPanel() {
     ch.onclick = () => { state.selFam = ch.dataset.fam; renderSummaryPanel(); };
   });
   // 小结固定统计「本周」（参考日期所在自然周，周一~周日完整周，与状态机一致）
+  // 统计范围跟随 医院/药房 筛选（多选=或）
   const W0 = getWeekRange("this");
-  $("#periodFixedLabel").textContent = `本周：${W0.start} ~ ${W0.end}`;
+  const scope = [];
+  if (state.hospitals.size) scope.push("医院" + state.hospitals.size + "家");
+  if (state.pharmacies.size) scope.push("药房" + state.pharmacies.size + "家");
+  $("#periodFixedLabel").textContent = `本周：${W0.start} ~ ${W0.end}` + (scope.length ? `（已按 ${scope.join("、")} 统计）` : "");
   // 文案 + 原因修正输入
   const { text, st } = buildSummaryText(state.selFam);
   $("#summaryText").textContent = text;
@@ -904,7 +915,7 @@ $("#clearAllBtn").onclick = () => {
 
 /* ============ 筛选交互 ============ */
 $("#clearBtn").onclick = () => {
-  state.cats.clear(); state.subs.clear(); state.repurParts.clear(); state.products.clear(); state.hospitals.clear(); state.executors.clear();
+  state.cats.clear(); state.subs.clear(); state.repurParts.clear(); state.products.clear(); state.hospitals.clear(); state.pharmacies.clear(); state.executors.clear();
   state.weekSel = "this"; state.refDate = "";
   state.q = "";
   $("#searchInput").value = "";
@@ -986,6 +997,7 @@ function togglePanel(panel) {
 }
 $("#prodMsBtn").onclick = e => { e.stopPropagation(); togglePanel($("#prodMsPanel")); };
 $("#hospMsBtn").onclick = e => { e.stopPropagation(); togglePanel($("#hospMsPanel")); };
+$("#pharmMsBtn").onclick = e => { e.stopPropagation(); togglePanel($("#pharmMsPanel")); };
 $("#execMsBtn").onclick = e => { e.stopPropagation(); togglePanel($("#execMsPanel")); };
 $("#colBtn").onclick = e => {
   e.stopPropagation();
@@ -1158,7 +1170,7 @@ async function doSnapshot(desen) {
         q: state.q,
         cats: [...state.cats], subs: [...state.subs], repurParts: [...state.repurParts],
         products: [...state.products],
-        hospitals: [...state.hospitals], executors: [...state.executors],
+        hospitals: [...state.hospitals], pharmacies: [...state.pharmacies], executors: [...state.executors],
         plainName: state.plainName, plainPhone: state.plainPhone, plainDoctor: state.plainDoctor,
         maskMode: state.maskMode,
         hiddenCols: [...state.hiddenCols],
@@ -1222,6 +1234,7 @@ function loadSnapshot(snap) {
   state.repurParts = new Set(s.repurParts || []);
   state.products = new Set(s.products || []);
   state.hospitals = new Set(s.hospitals || []);
+  state.pharmacies = new Set(s.pharmacies || []);
   state.executors = new Set(s.executors || []);
   state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone; state.plainDoctor = !!s.plainDoctor;
   state.maskMode = s.maskMode || "edge";
