@@ -262,6 +262,7 @@ function buildRows() {
         executor: matched ? (matched.executor || "") : "",
         fu_note: matched ? (matched.follow_note || "") : "",
         fu_signal: sig.signal === "unknown" ? "" : sig.reason,
+        fu_signal_kind: sig.signal, // 信号类别：normal / nonstd / dropout / unknown（用于着色）
         status: category, substatus,
         _matched: matched,
       });
@@ -527,7 +528,13 @@ function rowHtml(r, idx, inRng, cols) {
       const v = STORE.notes[k] || "";
       return `<td><input class="note-input" data-key="${esc(k)}" value="${esc(v)}" placeholder="填写跟进备注" ${SNAP_MODE ? "disabled" : ""}></td>`;
     }
-    if (key === "fu_type" || key === "fu_signal") return `<td><div class="cell-clip">${esc(disp(r, key))}</div></td>`;
+    if (key === "fu_type") return `<td><div class="cell-clip">${esc(disp(r, key))}</div></td>`;
+    if (key === "fu_signal") {
+      const txt = disp(r, key);
+      if (!txt) return `<td><span class="muted">—</span></td>`;
+      const kind = ["normal", "nonstd", "dropout"].includes(r.fu_signal_kind) ? r.fu_signal_kind : "unknown";
+      return `<td><div class="cell-clip"><span class="fu-sig ${kind}">${esc(txt)}</span></div></td>`;
+    }
     return `<td>${esc(disp(r, key))}</td>`;
   }).join("");
   return `<tr class="data-row ${inRng ? "in-range" : ""}" data-idx="${idx}">${cells}</tr>`;
@@ -1044,10 +1051,12 @@ async function doExport(desen) {
   const rows = DATA.rows;
   if (!rows.length) { alert("当前筛选无数据可导出"); return; }
   const header = LIST_COLS.map(([, l]) => l).concat(["随访小结"]);
-  // 列索引（用于着色）：状态=status、下钻=substatus、距今天数=days_to_due
+  // 列索引（用于着色）：状态=status、下钻=substatus、距今天数=days_to_due、随访信号=fu_signal
   const idxStatus = LIST_COLS.findIndex(([k]) => k === "status");
   const idxSub = LIST_COLS.findIndex(([k]) => k === "substatus");
   const idxDays = LIST_COLS.findIndex(([k]) => k === "days_to_due");
+  const idxSig = LIST_COLS.findIndex(([k]) => k === "fu_signal");
+  const EXPORT_SIG_FONT = { normal: "FF0F9D6B", nonstd: "FFE8590C", dropout: "FFE03131" };
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("预计购药名单");
@@ -1089,6 +1098,10 @@ async function doExport(desen) {
     // 距今天数：逾期标红加粗
     if (idxDays >= 0 && typeof r.days_to_due === "number" && r.days_to_due < 0) {
       row.getCell(idxDays + 1).font = { bold: true, color: { argb: "FFE03131" } };
+    }
+    // 随访信号：按类别着色（正常=绿 / 可能延期=橙 / 脱落=红）
+    if (idxSig >= 0 && r.fu_signal && EXPORT_SIG_FONT[r.fu_signal_kind]) {
+      row.getCell(idxSig + 1).font = { color: { argb: EXPORT_SIG_FONT[r.fu_signal_kind] } };
     }
   }
   // 列宽（17 个 LIST_COLS 列 + 随访小结）
