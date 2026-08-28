@@ -305,8 +305,9 @@
 
     <!-- 状态统计 -->
     <div class="filter-section">
-      <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；下钻：正常状态 / 预判延期 / 已脱落（所有患者按随访信号标注，点标签可手动切换）</span></div>
+      <div class="fs-label">患者状态<span class="fs-hint">点击卡片筛选，再次点击取消；「应回购」= 应回未回 + 应回已回（细分可点选）；下钻：正常状态 / 预判延期 / 已脱落（所有患者按随访信号标注，点标签可手动切换）；计数随品种/医院/随访人等筛选变化</span></div>
       <div class="summary" id="summary"></div>
+      <div class="subtype-bar hidden" id="repurPartBar"></div>
       <div class="subtype-bar hidden" id="substatusBar"></div>
     </div>
 

@@ -100,9 +100,11 @@ function assert(cond, msg) {
   const st = App.buildSummaryStats('百泽安');
   console.log('  本周范围:', st.start, '~', st.end);
   assert(st.start === '2026-08-24' && st.end === '2026-08-30', '本周=周一~周日完整周（与状态机一致）');
-  assert(st.due === 6, `应购药 6 人（甲/乙/丁/戊/己/庚）（实际 ${st.due}）`);
-  assert(st.bought === 1, `实际购药 1 人（丙，当周购药）（实际 ${st.bought}）`);
-  assert(st.notBought === 6, `未购药 6 人（实际 ${st.notBought}）`);
+  // 应回购（总集）= 应回未回 6 + 应回已回 1 = 7
+  assert(st.due === 7, `应回购 7 人（应回未回6 + 应回已回1）（实际 ${st.due}）`);
+  assert(st.bought === 1, `应回已回 1 人（丙，当周购药）（实际 ${st.bought}）`);
+  assert(st.notBought === 6, `应回未回 6 人（实际 ${st.notBought}）`);
+  assert(st.due === st.bought + st.notBought, '应回购 = 应回已回 + 应回未回（自洽）');
   assert(st.cnt.delay === 1 && st.cnt.dropout_effect === 1 && st.cnt.channel === 1 &&
     st.cnt.fuFail === 1 && st.cnt.prolong === 1 && st.cnt.switch === 1, '原因细分 各1人');
   assert(st.dTotal === 1, '脱落合计 1 人');
@@ -110,19 +112,20 @@ function assert(cond, msg) {
   assert(st.nextTotal === 2, `下周预计合计 2 人（壬/癸）（实际 ${st.nextTotal}）`);
 
   console.log('\n===== ② 与状态机一致性核对 =====');
-  // 小结「未购药」应等于状态机本周「应回购」；「实际购药」应等于「已回购」
+  // 小结「应回未回」应等于状态机「应回购·应回未回」行数；「应回已回」=「应回购·应回已回」行数
   const rows = App.buildRows();
-  const ying = rows.filter(r => r.status === '应回购').length;
-  const repur = rows.filter(r => r.status === '已回购').length;
-  assert(st.notBought === ying, `未购药 ${st.notBought} = 状态机应回购 ${ying}`);
-  assert(st.bought === repur, `实际购药 ${st.bought} = 状态机已回购 ${repur}`);
-  assert(st.due >= st.notBought, '应购药 ≥ 未购药');
+  const notBack = rows.filter(r => r.status === '应回购' && r.repur_part === '应回未回').length;
+  const back = rows.filter(r => r.status === '应回购' && r.repur_part === '应回已回').length;
+  const yingTotal = rows.filter(r => r.status === '应回购').length;
+  assert(st.notBought === notBack, `应回未回 ${st.notBought} = 状态机应回未回 ${notBack}`);
+  assert(st.bought === back, `应回已回 ${st.bought} = 状态机应回已回 ${back}`);
+  assert(st.due === yingTotal, `应回购总集 ${st.due} = 状态机应回购 ${yingTotal}`);
 
   console.log('\n===== ③ 文案格式 =====');
   const { text } = App.buildSummaryText('百泽安');
   console.log(text.split('\n').map(l => '  | ' + l).join('\n'));
   assert(text.includes('本周小结（百泽安）：'), '标题按品种');
-  assert(text.includes('1. 本周老患者应购药 6 人，实际购药 1 人，未购药 6 人；'), '第1行数字正确');
+  assert(text.includes('1. 本周应回购 7 人（应回已回 1 人、应回未回 6 人）；'), '第1行数字正确');
   assert(text.includes('①延迟用药1人、②脱落1人（效果不佳1/自觉好转0/不良反应0/经济0/其他0）、③转渠道1人、④随访失败未探寻原因1人、⑤医嘱延长1人、⑥换药1人'), '第2行原因正确');
   assert(text.includes('4. 下周预计复购 2 人，预计正常回购 1 人，推迟 1 人') && text.includes('出差'), '第4行下周预计+推迟原因');
 
@@ -138,13 +141,13 @@ function assert(cond, msg) {
   const stA = App.buildSummaryStats('百泽安');
   App.state.periodType = 'custom'; App.state.periodStart = '2026-01-01'; App.state.periodEnd = '2026-12-31';
   const stB = App.buildSummaryStats('百泽安');
-  assert(stA.due === 6 && stB.due === 6 && stA.bought === stB.bought, '近7天/自定义选项均不影响统计（固定本周）');
+  assert(stA.due === 7 && stB.due === 7 && stA.bought === stB.bought, '近7天/自定义选项均不影响统计（固定本周）');
   App.state.periodType = '7d';
 
   console.log('\n===== ⑥ 周视图切换不影响小结（小结固定本周） =====');
   App.state.weekSel = 'last'; await App.refresh();
   const stC = App.buildSummaryStats('百泽安');
-  assert(stC.start === '2026-08-24' && stC.due === 6, `切上周视图，小结仍统计本周（实际 ${stC.start} 应购${stC.due}）`);
+  assert(stC.start === '2026-08-24' && stC.due === 7, `切上周视图，小结仍统计本周（实际 ${stC.start} 应回购${stC.due}）`);
   App.state.weekSel = 'this'; await App.refresh();
 
   console.log('\n✅ 整体小结测试全部通过');

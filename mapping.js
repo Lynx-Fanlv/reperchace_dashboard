@@ -23,9 +23,11 @@ function normalizeProduct(v) {
 }
 
 // 回购分析的状态分类（名单主维度）。
-// 大类：应回购（应购药日进入提前窗口）/ 已回购 / 未到期 / 已逾期（应购药日已过）。
-// 「应回购」患者按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据最近随访内容判定，用户可点选手动修正）。
-const CATEGORIES = ["应回购", "已回购", "未到期", "已逾期"];
+// 大类：应回购（= 应回未回 + 应回已回，所选周应购清单）/ 未到期 / 已逾期。
+// 「应回购」细分：应回未回（应购日∈所选周未购药）/ 应回已回（所选周内有购药记录）。
+// 所有患者按下钻子状态标注：正常状态 / 预判延期 / 已脱落（依据最近随访内容判定，用户可点选手动修正）。
+const CATEGORIES = ["应回购", "未到期", "已逾期"];
+const REPUR_PARTS = ["应回未回", "应回已回"];
 const SUBSTATUS = ["正常状态", "预判延期", "已脱落"];
 
 // ---------------------------------------------------------------------------
@@ -257,7 +259,7 @@ function classifyFuReason(fu) {
 
 if (typeof window !== "undefined") {
   window.Mapping = {
-    PRODUCT_FAMILIES, normalizeProduct, CATEGORIES, SUBSTATUS,
+    PRODUCT_FAMILIES, normalizeProduct, CATEGORIES, REPUR_PARTS, SUBSTATUS,
     TABLE_SIGNATURES, detectTableType, normHeader, _cell, _gtext,
     isPlaceholder, followupSignal, classifyFuReason, KEYWORD_RULES, KEYWORD_RULES_MULTI,
   };
