@@ -63,7 +63,7 @@ const App = global.AppCore;
   // 行2：应回购 / 未购药原因=延迟用药
   const r2 = ws.getRow(2);
   const idxStatus = 14, idxReason = 15, idxDays = 10; // 与 LIST_COLS 对应（1-based: status=14, reason=15, days=10）
-  console.log('[行2] 患者=', r2.getCell(1).value, '| 状态列=', r2.getCell(idxStatus).value,
+  console.log('[行2] 患者=', r2.getCell(1).value, '| 状态列=', r2.getCell(idxStatus).value, '(期望 应回未回)',
     '| 底色:', r2.getCell(idxStatus).fill.fgColor && r2.getCell(idxStatus).fill.fgColor.argb, '期望 FFFCEBEB(浅红)');
   console.log('[行2] 未购药原因列=', r2.getCell(idxReason).value,
     '| 字色:', r2.getCell(idxReason).font.color && r2.getCell(idxReason).font.color.argb, '期望 FFE8590C(橙)');
@@ -83,6 +83,7 @@ const App = global.AppCore;
   const ok = r2.getCell(1).value === '张*' &&
     (r2.getCell(1).fill.fgColor && r2.getCell(1).fill.fgColor.argb) === 'FFFFF3D6' &&
     !(r3.getCell(1).fill && r3.getCell(1).fill.fgColor && r3.getCell(1).fill.fgColor.argb) &&
+    r2.getCell(idxStatus).value === '应回未回' &&
     r2.getCell(idxStatus).fill.fgColor.argb === 'FFFCEBEB' &&
     r2.getCell(idxReason).value === '延迟用药' &&
     r2.getCell(idxReason).font.color.argb === 'FFE8590C' &&
