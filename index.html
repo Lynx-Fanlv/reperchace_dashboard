@@ -1743,14 +1743,16 @@ function rowHtml(r, idx, cols) {
   const cells = cols.map(([key]) => {
     if (key === "due_date") return `<td>${dueTxt}</td>`;
     if (key === "days_to_due") {
-      if (isRepur) return `<td>${esc(r.purchase_days_ago != null ? "购药" + r.purchase_days_ago + "天前" : "—")}</td>`;
+      if (isRepur) return `<td>${esc(r.purchase_days_ago != null ? r.purchase_days_ago + "天前已购药" : "—")}</td>`;
       return `<td>${esc(days === 0 ? "今天" : (days > 0 ? "+" + days : String(days)))}</td>`;
     }
     if (key === "status") {
+      // 应回购行仅显示细分标签（应回未回 / 应回已回）；其他主状态照常显示
+      if (r.status === "应回购" && r.repur_part) {
+        return `<td><span class="tag" style="background:${REPUR_PART_COLOR[r.repur_part]}">${esc(r.repur_part)}</span></td>`;
+      }
       const color = CAT_COLOR[r.status] || "#868e96";
-      let tag = `<span class="tag" style="background:${color}">${esc(r.status)}</span>`;
-      if (r.repur_part) tag += ` <span class="tag" style="background:${REPUR_PART_COLOR[r.repur_part]}">${esc(r.repur_part)}</span>`;
-      return `<td>${tag}</td>`;
+      return `<td><span class="tag" style="background:${color}">${esc(r.status)}</span></td>`;
     }
     if (key === "reason") {
       // 未购药原因列：自动判定预填 / 人工点选覆盖（所有患者可点选标注）；无标注按状态显示占位
@@ -2444,7 +2446,8 @@ async function doExport(desen) {
   for (const r of rows) {
     const vals = LIST_COLS.map(([k]) => {
       if (k === "note") return STORE.notes[noteKey(r)] || "";
-      if (k === "status") return r.status + (r.repur_part ? "·" + r.repur_part : ""); // 应回购细分并入状态列
+      // 应回购行仅导出细分（应回未回 / 应回已回，与列表显示一致）
+      if (k === "status") return (r.status === "应回购" && r.repur_part) ? r.repur_part : r.status;
       if (k === "reason") {
         // 未购药原因：标注分类 / 无标注按状态占位（与展示一致）
         if (r.reason) return reasonLabel(state.reasonTree, r.reason) || r.reason;
@@ -2454,9 +2457,9 @@ async function doExport(desen) {
       if (k === "patient_name") return desen ? maskName(r.patient_name) : (r.patient_name || "");
       if (k === "phone") return desen ? maskPhone(r.phone) : (r.phone || "");
       if (k === "physician") return desen ? maskDoctor(r.physician) : (r.physician || "");
-      // 应回已回行：距今天数列导出「购药N天前」（与展示一致），应购药日期列已是预判应购日
+      // 应回已回行：距今天数列导出「N天前已购药」（与展示一致），应购药日期列已是预判应购日
       if (k === "days_to_due" && r.repur_part === "应回已回") {
-        return r.purchase_days_ago != null ? "购药" + r.purchase_days_ago + "天前" : "";
+        return r.purchase_days_ago != null ? r.purchase_days_ago + "天前已购药" : "";
       }
       return r[k] == null ? "" : r[k];
     });
@@ -2468,8 +2471,8 @@ async function doExport(desen) {
         c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3D6" } };
       });
     }
-    // 状态列：浅色填充 + 深色字
-    const st = EXPORT_CAT_STYLE[r.status];
+    // 状态列：浅色填充 + 深色字（应回购细分按 应回未回=浅红 / 应回已回=浅绿 区分着色）
+    const st = (r.status === "应回购" && r.repur_part) ? EXPORT_REPUR_STYLE[r.repur_part] : EXPORT_CAT_STYLE[r.status];
     if (idxStatus >= 0 && st) {
       row.getCell(idxStatus + 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: st.fill } };
       row.getCell(idxStatus + 1).font = { bold: true, color: { argb: st.font } };
