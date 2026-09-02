@@ -764,27 +764,32 @@ function buildSummaryStats(fam) {
     cnt, dTotal, nextTotal: nextKeys.length, normal, postpone, postponeReasons: [...postponeReasons] };
 }
 
-// 生成小结文案（未购药原因按用户维护的分类树动态生成；父类人数=子类之和）
-function buildSummaryText(fam) {
-  const st = buildSummaryStats(fam);
-  // 人工修正优先（fuAdj 仅存用户改过的值，key=分类树叶子 key）；父类人数 = 子类修正值之和
+// 未购药原因各分类数据（人工修正优先；父类人数=子类之和）——小结文本与可编辑渲染共用
+function reasonParts(st, fam) {
   const adj = state.fuAdj[fam] || {};
   const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
-  // 第 2 行：按维护树顺序生成「①延迟用药X人、②脱落X人（效果不佳X/自觉好转X/…）、③转渠道X人…」
-  const parts = [];
+  const out = [];
   let idx = 1;
   const cn = ["", "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮"];
   for (const n of state.reasonTree) {
     if (n.children && n.children.length) {
-      const subs = n.children.map(c => ({ label: c.label, n: v(c.key, st.cnt[c.key] || 0) }));
-      const total = subs.reduce((s, x) => s + x.n, 0);
-      const sub = subs.map(x => `${x.label}${x.n}`).join("/");
-      parts.push(`${cn[idx] || (idx + ".")}${n.label}${total}人（${sub}）`);
+      const subs = n.children.map(c => ({ key: c.key, label: c.label, n: v(c.key, st.cnt[c.key] || 0) }));
+      out.push({ cn: cn[idx] || (idx + "."), label: n.label, subs, total: subs.reduce((s, x) => s + x.n, 0) });
     } else {
-      parts.push(`${cn[idx] || (idx + ".")}${n.label}${v(n.key, st.cnt[n.key] || 0)}人`);
+      out.push({ cn: cn[idx] || (idx + "."), label: n.label, leaf: n.key, n: v(n.key, st.cnt[n.key] || 0) });
     }
     idx++;
   }
+  return out;
+}
+
+// 生成小结文案（未购药原因按用户维护的分类树动态生成；父类人数=子类之和）
+function buildSummaryText(fam) {
+  const st = buildSummaryStats(fam);
+  const parts = reasonParts(st, fam).map(p =>
+    p.subs
+      ? `${p.cn}${p.label}${p.total}人（${p.subs.map(x => `${x.label}${x.n}`).join("/")}）`
+      : `${p.cn}${p.label}${p.n}人`);
   const wkLabel = WEEK_LABEL[state.weekSel] || "本周";
   const lines = [];
   lines.push(`${wkLabel}小结（${fam}）：`);
@@ -826,31 +831,47 @@ function renderSummaryPanel() {
   if (state.hospitals.size) scope.push("医院" + state.hospitals.size + "家");
   if (state.pharmacies.size) scope.push("药房" + state.pharmacies.size + "家");
   $("#periodFixedLabel").textContent = `${WEEK_LABEL[state.weekSel] || "本周"}：${W0.start} ~ ${W0.end}` + (scope.length ? `（已按 ${scope.join("、")} 统计）` : "");
-  // 文案 + 未购药原因人数修正（自动统计，可修改；输入框=分类树叶子项）
+  // 文案：小结文本内直接编辑（第2行原因数字=可点击的橙色数字，点击原地变输入框）
   const { text, st } = buildSummaryText(state.selFam);
-  $("#summaryText").textContent = text;
-  const adj = state.fuAdj[state.selFam] || {};
-  const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
-  const leaves = [];
-  for (const n of state.reasonTree) {
-    if (n.children && n.children.length) leaves.push(...n.children);
-    else leaves.push(n);
-  }
-  $("#summaryAdjust").innerHTML =
-    `<span class="sa-lbl">未购药原因人数（自动统计，可修改）：</span>` +
-    leaves.map(n =>
-      `<span class="sa-item" data-k="${esc(n.key)}"><span class="sa-name">${esc(n.path)}</span>` +
-      `<input type="number" class="sa-num" min="0" value="${v(n.key, st.cnt[n.key] || 0)}"></span>`).join("");
-  document.querySelectorAll("#summaryAdjust .sa-num").forEach(inp => {
-    inp.addEventListener("change", () => {
-      const item = inp.closest(".sa-item");
-      if (!item) return;
-      const k = item.dataset.k;
-      const num = Math.max(0, parseInt(inp.value, 10) || 0);
-      (state.fuAdj[state.selFam] = state.fuAdj[state.selFam] || {})[k] = num;
+  const wkLabel = WEEK_LABEL[state.weekSel] || "本周";
+  const fam = state.selFam;
+  const line1 = `${wkLabel}小结（${fam}）：\n1. ${wkLabel}应回购 ${st.due} 人（应回已回 ${st.bought} 人、应回未回 ${st.notBought} 人）；`;
+  const line2 = reasonParts(st, fam).map(p =>
+    p.subs
+      ? `${p.cn}${esc(p.label)}<span class="sn-total" title="由子类人数之和决定">${p.total}</span>人（${p.subs.map(x => `${esc(x.label)}<span class="sn-num" data-k="${esc(x.key)}" title="点击修改人数">${x.n}</span>`).join("/")}）`
+      : `${p.cn}${esc(p.label)}<span class="sn-num" data-k="${esc(p.leaf)}" title="点击修改人数">${p.n}</span>人`).join("、");
+  const pReasons = st.postponeReasons.length ? `（${st.postponeReasons.slice(0, 5).map(esc).join("、")}）` : "";
+  const line4 = `4. 下周预计复购 ${st.normal + st.postpone} 人，预计正常回购 ${st.normal} 人，推迟 ${st.postpone} 人${pReasons}`;
+  $("#summaryText").innerHTML =
+    esc(line1) + "\n2. 未购药原因：" + line2 + "；\n" + esc(line4);
+  // 点击数字 → 原地变输入框，回车/失焦保存（Esc 取消）
+  $("#summaryText").onclick = (e) => {
+    if (SNAP_MODE) return;
+    const t = e.target.closest(".sn-num");
+    if (!t) return;
+    const k = t.dataset.k;
+    const input = document.createElement("input");
+    input.type = "number"; input.min = "0"; input.className = "sn-input";
+    input.value = t.textContent.trim();
+    t.replaceWith(input);
+    input.focus(); input.select();
+    let done = false;
+    const commit = () => {
+      if (done) return; done = true;
+      const n = Math.max(0, parseInt(input.value, 10) || 0);
+      (state.fuAdj[fam] = state.fuAdj[fam] || {})[k] = n;
       renderSummaryPanel();
+    };
+    input.addEventListener("change", commit);
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", ev => {
+      if (ev.key === "Enter") input.blur();
+      else if (ev.key === "Escape") { done = true; renderSummaryPanel(); }
     });
-  });
+  };
+  // 提示条
+  $("#summaryAdjust").innerHTML =
+    '<span class="sa-lbl">💡 小结中的橙色数字可直接点击修改（人工修正优先于自动统计，随快照保存）</span>';
   $("#summaryAdjust").classList.toggle("hidden", SNAP_MODE);
   // 管理分类（维护小结分类树；未购药原因列选项跟随）
   const mgrBtn = $("#manageReasonBtn");
