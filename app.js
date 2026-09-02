@@ -798,7 +798,12 @@ function buildSummaryText(fam) {
   lines.push(`1. ${wkLabel}应回购 ${st.due} 人（应回已回 ${st.bought} 人、应回未回 ${st.notBought} 人）；`);
   lines.push(`2. 未购药原因：${parts.join("、")}；`);
   const pReasons = st.postponeReasons.length ? `（${st.postponeReasons.slice(0, 5).join("、")}）` : "";
-  lines.push(`4. 下周预计复购 ${st.normal + st.postpone} 人，预计正常回购 ${st.normal} 人，推迟 ${st.postpone} 人${pReasons}`);
+  // 下周预计：人工修正优先（fuAdj 键 next_normal / next_postpone）；复购总数 = 正常 + 推迟
+  const adj4 = state.fuAdj[fam] || {};
+  const v4 = (k, auto) => (adj4[k] != null ? adj4[k] : auto);
+  const nNormal = v4("next_normal", st.normal);
+  const nPostpone = v4("next_postpone", st.postpone);
+  lines.push(`4. 下周预计复购 ${nNormal + nPostpone} 人，预计正常回购 ${nNormal} 人，推迟 ${nPostpone} 人${pReasons}`);
   SUMMARY.text = lines.join("\n");
   return { text: SUMMARY.text, st };
 }
@@ -843,9 +848,14 @@ function renderSummaryPanel() {
       ? `${p.cn}${esc(p.label)}<span class="sn-total" title="由子类人数之和决定">${p.total}</span>人（${p.subs.map(x => `${esc(x.label)}<span class="sn-num" data-k="${esc(x.key)}" title="点击修改人数">${x.n}</span>`).join("/")}）`
       : `${p.cn}${esc(p.label)}<span class="sn-num" data-k="${esc(p.leaf)}" title="点击修改人数">${p.n}</span>人`).join("、");
   const pReasons = st.postponeReasons.length ? `（${st.postponeReasons.slice(0, 5).map(esc).join("、")}）` : "";
-  const line4 = `4. 下周预计复购 ${st.normal + st.postpone} 人，预计正常回购 ${st.normal} 人，推迟 ${st.postpone} 人${pReasons}`;
+  // 下周预计：复购总数（=正常+推迟）不可编辑，正常/推迟数字可点击修改
+  const adj4 = state.fuAdj[fam] || {};
+  const v4 = (k, auto) => (adj4[k] != null ? adj4[k] : auto);
+  const nNormal = v4("next_normal", st.normal);
+  const nPostpone = v4("next_postpone", st.postpone);
+  const line4 = `4. 下周预计复购 <span class="sn-total" title="由正常+推迟之和决定">${nNormal + nPostpone}</span> 人，预计正常回购 <span class="sn-num" data-k="next_normal" title="点击修改人数">${nNormal}</span> 人，推迟 <span class="sn-num" data-k="next_postpone" title="点击修改人数">${nPostpone}</span> 人${pReasons}`;
   $("#summaryText").innerHTML =
-    esc(line1) + "\n2. 未购药原因：" + line2 + "；\n" + esc(line4);
+    esc(line1) + "\n2. 未购药原因：" + line2 + "；\n" + line4;
   // 点击数字 → 原地变输入框，回车/失焦保存（Esc 取消）
   $("#summaryText").onclick = (e) => {
     if (SNAP_MODE) return;

@@ -150,6 +150,13 @@ function assert(cond, msg) {
   assert(textF2.includes('②脱落3人（效果不佳2/自觉好转1'), '父类脱落=子类修正之和（3=2+1）');
   App.state.fuAdj = {};
 
+  console.log('\n===== ④c 下周预计人数人工修正 =====');
+  // next_normal/next_postpone 修正 → 复购总数=正常+推迟
+  App.state.fuAdj['百泽安'] = { next_normal: 5, next_postpone: 2 };
+  const textN4 = App.buildSummaryText('百泽安').text;
+  assert(textN4.includes('4. 下周预计复购 7 人，预计正常回购 5 人，推迟 2 人'), `下周预计修正生效（实际: ${textN4.split('\n')[3]}）`);
+  App.state.fuAdj = {};
+
   console.log('\n===== ⑤ 分类维护：新增/删除分类 → 文案与标注跟随 =====');
   // 新增平级分类
   App.addReason('新分类X');
