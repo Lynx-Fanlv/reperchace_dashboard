@@ -139,6 +139,17 @@ function assert(cond, msg) {
   assert(text2.includes('①延迟用药2人') && text2.includes('⑥换药0人'), '小结文案跟随原因标注变化');
   App.STORE.reasonOverrides = {}; await App.refresh();
 
+  console.log('\n===== ④b 小结人数人工修正（fuAdj） =====');
+  // 平级项修正：延迟用药 自动1 → 人工3
+  App.state.fuAdj['百泽安'] = { delay: 3 };
+  const textF = App.buildSummaryText('百泽安').text;
+  assert(textF.includes('①延迟用药3人'), `人工修正后延迟用药 3 人（实际: ${textF.split('\n')[2]}）`);
+  // 叶子修正 → 父类=子类修正之和
+  App.state.fuAdj['百泽安'] = { dropout_effect: 2, dropout_recover: 1 };
+  const textF2 = App.buildSummaryText('百泽安').text;
+  assert(textF2.includes('②脱落3人（效果不佳2/自觉好转1'), '父类脱落=子类修正之和（3=2+1）');
+  App.state.fuAdj = {};
+
   console.log('\n===== ⑤ 分类维护：新增/删除分类 → 文案与标注跟随 =====');
   // 新增平级分类
   App.addReason('新分类X');

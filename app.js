@@ -89,6 +89,7 @@ const state = {
   periodType: "7d", periodStart: "", periodEnd: "",
   selFam: "",
   reasonTree: cloneReasonTree(DEFAULT_REASON_TREE), // 用户维护后的分类树（随快照保存）
+  fuAdj: {},   // { [fam]: { [分类key]: n } } 小结人数人工修正（仅存用户改过的值；key=分类树叶子 key）
 };
 let SUMMARY = { text: "" }; // 当前整体小结文本（快照保存用）
 let ALL_ROWS = [];          // 全量计算行（小结统计用，不随筛选变化）
@@ -766,17 +767,21 @@ function buildSummaryStats(fam) {
 // 生成小结文案（未购药原因按用户维护的分类树动态生成；父类人数=子类之和）
 function buildSummaryText(fam) {
   const st = buildSummaryStats(fam);
+  // 人工修正优先（fuAdj 仅存用户改过的值，key=分类树叶子 key）；父类人数 = 子类修正值之和
+  const adj = state.fuAdj[fam] || {};
+  const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
   // 第 2 行：按维护树顺序生成「①延迟用药X人、②脱落X人（效果不佳X/自觉好转X/…）、③转渠道X人…」
   const parts = [];
   let idx = 1;
   const cn = ["", "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮"];
   for (const n of state.reasonTree) {
-    const parentCnt = st.cnt[n.key] || 0;
     if (n.children && n.children.length) {
-      const sub = n.children.map(c => `${c.label}${st.cnt[c.key] || 0}`).join("/");
-      parts.push(`${cn[idx] || (idx + ".")}${n.label}${parentCnt}人（${sub}）`);
+      const subs = n.children.map(c => ({ label: c.label, n: v(c.key, st.cnt[c.key] || 0) }));
+      const total = subs.reduce((s, x) => s + x.n, 0);
+      const sub = subs.map(x => `${x.label}${x.n}`).join("/");
+      parts.push(`${cn[idx] || (idx + ".")}${n.label}${total}人（${sub}）`);
     } else {
-      parts.push(`${cn[idx] || (idx + ".")}${n.label}${parentCnt}人`);
+      parts.push(`${cn[idx] || (idx + ".")}${n.label}${v(n.key, st.cnt[n.key] || 0)}人`);
     }
     idx++;
   }
@@ -821,9 +826,32 @@ function renderSummaryPanel() {
   if (state.hospitals.size) scope.push("医院" + state.hospitals.size + "家");
   if (state.pharmacies.size) scope.push("药房" + state.pharmacies.size + "家");
   $("#periodFixedLabel").textContent = `${WEEK_LABEL[state.weekSel] || "本周"}：${W0.start} ~ ${W0.end}` + (scope.length ? `（已按 ${scope.join("、")} 统计）` : "");
-  // 文案
-  const { text } = buildSummaryText(state.selFam);
+  // 文案 + 未购药原因人数修正（自动统计，可修改；输入框=分类树叶子项）
+  const { text, st } = buildSummaryText(state.selFam);
   $("#summaryText").textContent = text;
+  const adj = state.fuAdj[state.selFam] || {};
+  const v = (k, auto) => (adj[k] != null ? adj[k] : auto);
+  const leaves = [];
+  for (const n of state.reasonTree) {
+    if (n.children && n.children.length) leaves.push(...n.children);
+    else leaves.push(n);
+  }
+  $("#summaryAdjust").innerHTML =
+    `<span class="sa-lbl">未购药原因人数（自动统计，可修改）：</span>` +
+    leaves.map(n =>
+      `<span class="sa-item" data-k="${esc(n.key)}"><span class="sa-name">${esc(n.path)}</span>` +
+      `<input type="number" class="sa-num" min="0" value="${v(n.key, st.cnt[n.key] || 0)}"></span>`).join("");
+  document.querySelectorAll("#summaryAdjust .sa-num").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const item = inp.closest(".sa-item");
+      if (!item) return;
+      const k = item.dataset.k;
+      const num = Math.max(0, parseInt(inp.value, 10) || 0);
+      (state.fuAdj[state.selFam] = state.fuAdj[state.selFam] || {})[k] = num;
+      renderSummaryPanel();
+    });
+  });
+  $("#summaryAdjust").classList.toggle("hidden", SNAP_MODE);
   // 管理分类（维护小结分类树；未购药原因列选项跟随）
   const mgrBtn = $("#manageReasonBtn");
   if (SNAP_MODE) mgrBtn.classList.add("hidden");
@@ -1330,7 +1358,7 @@ async function doSnapshot(desen) {
         maskMode: state.maskMode,
         hiddenCols: [...state.hiddenCols],
         periodType: state.periodType, periodStart: state.periodStart, periodEnd: state.periodEnd,
-        selFam: state.selFam, reasonTree: state.reasonTree,
+        selFam: state.selFam, reasonTree: state.reasonTree, fuAdj: state.fuAdj,
       },
       summaryText: SUMMARY.text,
       buildAt: new Date().toISOString(),
@@ -1399,6 +1427,7 @@ function loadSnapshot(snap) {
   state.periodStart = s.periodStart || ""; state.periodEnd = s.periodEnd || "";
   state.selFam = s.selFam || "";
   if (s.reasonTree) state.reasonTree = cloneReasonTree(s.reasonTree);
+  state.fuAdj = s.fuAdj || {};
   SUMMARY.text = snap.summaryText || "";
   // 上传区隐藏
   ["#dropAll", "#pendingPanel"].forEach(id => $(id).classList.add("hidden"));
