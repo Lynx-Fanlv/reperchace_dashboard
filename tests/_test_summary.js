@@ -160,22 +160,33 @@ function assert(cond, msg) {
   const textR = App.buildSummaryText('百泽安').text;
   assert(textR.includes('⑥换药1人'), '恢复默认后文案还原');
 
-  console.log('\n===== ⑥ 固定本周：不受周期控件影响 =====');
-  // 用户确认：小结固定按「本周」，不随近7天/自定义选项变化
+  console.log('\n===== ⑥ 周期控件不影响（统计跟随周视图） =====');
+  // 小结统计范围由 上周/本周/下周 视图决定；近7天/自定义遗留选项不影响
   App.state.periodType = '7d';
   const stA = App.buildSummaryStats('百泽安');
   App.state.periodType = 'custom'; App.state.periodStart = '2026-01-01'; App.state.periodEnd = '2026-12-31';
   const stB = App.buildSummaryStats('百泽安');
-  assert(stA.due === 7 && stB.due === 7 && stA.bought === stB.bought, '近7天/自定义选项均不影响统计（固定本周）');
+  assert(stA.due === 7 && stB.due === 7 && stA.bought === stB.bought, '近7天/自定义选项均不影响统计');
   App.state.periodType = '7d';
 
-  console.log('\n===== ⑥ 周视图切换不影响小结（小结固定本周） =====');
+  console.log('\n===== ⑦ 小结跟随周视图（点上周/下周 → 总结对应周） =====');
+  // 切「上周」（08-17~08-23）：应购日∈上周 = 辛（下次应购 08-20，08-03 购药者应购 08-24 不在上周）
   App.state.weekSel = 'last'; await App.refresh();
   const stC = App.buildSummaryStats('百泽安');
-  assert(stC.start === '2026-08-24' && stC.due === 7, `切上周视图，小结仍统计本周（实际 ${stC.start} 应回购${stC.due}）`);
+  console.log('  上周范围:', stC.start, '~', stC.end, '| 应回购:', stC.due);
+  assert(stC.start === '2026-08-17' && stC.end === '2026-08-23', `切上周 → 小结统计上周（实际 ${stC.start}~${stC.end}）`);
+  assert(stC.due === 1 && stC.notBought === 1, `上周应回购 1 人（辛，应购 08-20）（实际 ${stC.due}）`);
+  let txt = App.buildSummaryText('百泽安').text;
+  assert(txt.startsWith('上周小结（百泽安）：') && txt.includes('1. 上周应回购 1 人'), '文案标签跟随「上周」');
+  // 切「下周」（08-31~09-06）：壬/癸 下次应购 09-01 ∈ 下周 → 应回未回 2
+  App.state.weekSel = 'next'; await App.refresh();
+  const stNext = App.buildSummaryStats('百泽安');
+  assert(stNext.start === '2026-08-31' && stNext.due === 2 && stNext.notBought === 2, `下周应回购 2 人（壬/癸，应购 09-01）（实际 ${stNext.due}）`);
+  txt = App.buildSummaryText('百泽安').text;
+  assert(txt.startsWith('下周小结（百泽安）：') && txt.includes('1. 下周应回购 2 人'), '文案标签跟随「下周」');
   App.state.weekSel = 'this'; await App.refresh();
 
-  console.log('\n===== ⑦ 小结跟随医院/药房筛选（需求） =====');
+  console.log('\n===== ⑧ 小结跟随医院/药房筛选（需求） =====');
   // 追加 2 名患者（T1/T2 药房=P2、医院=H2），应购 08-24（本周）
   App.STORE.sales = S.concat([
     sales('双', '10000000019', '2026-08-03', '百泽安', 'H2', 'P2'),

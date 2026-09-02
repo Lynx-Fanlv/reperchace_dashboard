@@ -34,7 +34,7 @@ const App = global.AppCore;
     { _key: '13800001111', product: '百泽安', patient_name: '张三', phone: '13800001111', physician: '李医生',
       hospital: '人民医院', pharmacy: '药房A', last_purchase: '2026-08-01', cycle_days: 21, due_date: '2026-08-22',
       days_to_due: 2, fu_time: '2026-08-15', fu_type: '复购确认随访任务', executor: '刘倩', fu_note: '患者表示会按时购药',
-      fu_signal: '', status: '应回购', repur_part: '应回未回', reason: 'delay' },
+      fu_signal: '', status: '应回购', repur_part: '应回未回', reason: 'delay', due_in_week: true },
     { _key: '13900002222', product: '百悦泽', patient_name: '李四', phone: '13900002222', physician: '王医生',
       hospital: '中医院', pharmacy: '药房B', last_purchase: '2026-07-01', cycle_days: 28, due_date: '2026-07-29',
       days_to_due: -5, fu_time: '2026-07-20', fu_type: '日常随访任务', executor: '高金敏', fu_note: '',
@@ -76,7 +76,13 @@ const App = global.AppCore;
   console.log('[行3] 距今天数=', r3.getCell(idxDays).value,
     '| 字色:', r3.getCell(idxDays).font.color && r3.getCell(idxDays).font.color.argb, '期望 FFE03131(红)');
 
+  // 周内应购行：无专属样式列整行浅金底（患者列第1列）
+  console.log('[行2] 周内应购底色(患者列):', r2.getCell(1).fill.fgColor && r2.getCell(1).fill.fgColor.argb, '期望 FFFFF3D6(浅金)');
+  console.log('[行3] 非周内行无底色(患者列):', r3.getCell(1).fill && r3.getCell(1).fill.fgColor && r3.getCell(1).fill.fgColor.argb, '(应为空/无)');
+
   const ok = r2.getCell(1).value === '张*' &&
+    (r2.getCell(1).fill.fgColor && r2.getCell(1).fill.fgColor.argb) === 'FFFFF3D6' &&
+    !(r3.getCell(1).fill && r3.getCell(1).fill.fgColor && r3.getCell(1).fill.fgColor.argb) &&
     r2.getCell(idxStatus).fill.fgColor.argb === 'FFFCEBEB' &&
     r2.getCell(idxReason).value === '延迟用药' &&
     r2.getCell(idxReason).font.color.argb === 'FFE8590C' &&

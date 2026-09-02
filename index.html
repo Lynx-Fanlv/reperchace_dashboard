@@ -184,6 +184,10 @@
   tbody tr.data-row:hover{background:#f9fbff}
   tbody tr.data-row.in-range{background:#f2f6ff}
   tbody tr.data-row.in-range:hover{background:#e9f0ff}
+  /* 应购药日期落在所选周的患者：置顶并特殊底色 */
+  tbody tr.data-row.due-in-week{background:#fff3d6}
+  tbody tr.data-row.due-in-week:hover{background:#ffe9b8}
+  tbody tr.data-row.due-in-week td:first-child{box-shadow:inset 3px 0 0 var(--brand)}
   tr.expand-row td{background:#f8faff;border-bottom:1px solid var(--line)}
   .expand-box{font-size:12px;color:#374151;white-space:pre-wrap;line-height:1.7;padding:2px 0}
   .expand-box .eb-lbl{color:var(--brand);font-weight:600}
@@ -1366,13 +1370,17 @@ function buildRows() {
       }
 
       const isRepur = repurPart === "应回已回";
+      // 应购药日期列展示值（应回已回行=预判应购日）；是否落在所选周 → 列表置顶 + 特殊底色
+      const rowDue = isRepur ? (expectedDue || "") : dueDate;
+      const dueInWeek = !!rowDue && rowDue >= W.start && rowDue <= W.end;
       rows.push({
         _key: k, product: fam,
         patient_name: p.name, phone: p.phone, physician: bp.physician,
         hospital: bp.hospital, pharmacy: bp.pharmacy,
         last_purchase: lastPurchase, cycle_days: cycle,
         // 应回已回行：due_date 显示「预判应购日」（不呈现下次应购时间）；无预判基准显示空（渲染为 —）
-        due_date: isRepur ? (expectedDue || "") : dueDate,
+        due_date: rowDue,
+        due_in_week: dueInWeek, // 应购药日期落在所选周 → 优先展示并标底色
         expected_due: expectedDue || "",
         due_offset: isRepur ? dueOffset : null,   // 应回已回行：正=延期/负=提前/0=按时
         purchase_days_ago: isRepur ? Math.max(0, diffDays(today, lastPurchase)) : null, // 最近购药距今
@@ -1392,8 +1400,10 @@ function buildRows() {
     }
   }
 
-  // 排序：按应购药日期升序（应回已回行为预判应购日）；无预判基准的空值排最后。
+  // 排序：应购药日期落在「所选周」的患者置顶（周内应购优先），组内外均按应购药日期升序；
+  // 应回已回行按预判应购日参与；空值排最后。
   rows.sort((a, b) => {
+    if (!!a.due_in_week !== !!b.due_in_week) return a.due_in_week ? -1 : 1;
     const da = a.due_date || "9999-12-31", db = b.due_date || "9999-12-31";
     return da.localeCompare(db);
   });
@@ -1695,7 +1705,7 @@ function rowHtml(r, idx, cols) {
     }
     return `<td>${esc(disp(r, key))}</td>`;
   }).join("");
-  return `<tr class="data-row" data-idx="${idx}">${cells}</tr>`;
+  return `<tr class="data-row${r.due_in_week ? " due-in-week" : ""}" data-idx="${idx}">${cells}</tr>`;
 }
 
 function expandHtml(r, colspan) {
@@ -1751,15 +1761,15 @@ function renderPagination(total) {
   $("#nextPg").onclick = () => { if (state.page < pages) { state.page++; renderTable(); } };
 }
 
-/* ============ 整体小结（按品种分别总结；固定统计「本周」） ============ */
-// 计算某品种的「本周」小结统计（固定按本周，口径与周维度状态机完全一致）
-//   本周 = 参考日期所在自然周（周一~周日完整周，与状态机「本周」相同）
-//   应回购（总集）= 应回未回（应购日∈本周未购）+ 应回已回（当周购药，含提前购药者）
+/* ============ 整体小结（按品种分别总结；统计所选周，随周视图联动） ============ */
+// 计算某品种在「所选周」的小结统计（跟随 上周/本周/下周 视图，口径与周维度状态机完全一致）
+//   所选周 = 参考日期所在自然周（周一~周日完整周）前后推
+//   应回购（总集）= 应回未回（应购日∈所选周未购）+ 应回已回（所选周内购药，含提前购药者）
 //   未购药 = 应回未回；实际购药 = 应回已回
-//   下周预计 = 下次应购日 ∈ 下周（下个自然周）的患者，按随访信号分正常/推迟（脱落不计复购）
-// 固定本周：不受小结周期控件（近7天/自定义）影响
+//   下周预计 = 下次应购日 ∈ 所选周之后下一自然周的患者，按随访信号分正常/推迟（脱落不计复购）
+// 不受小结周期控件（近7天/自定义）影响
 function buildSummaryStats(fam) {
-  const W = getWeekRange("this");
+  const W = getWeekRange(state.weekSel);
   const nStart = addDays(W.end, 1), nEnd = addDays(W.end, 7); // 下周 = 下个自然周
   const inP = (d, s, e) => d && d >= s && d <= e;
   // 按患者×品种聚合购药日期（从销售明细，与状态机同一数据源）
@@ -1844,9 +1854,10 @@ function buildSummaryText(fam) {
     }
     idx++;
   }
+  const wkLabel = WEEK_LABEL[state.weekSel] || "本周";
   const lines = [];
-  lines.push(`本周小结（${fam}）：`);
-  lines.push(`1. 本周应回购 ${st.due} 人（应回已回 ${st.bought} 人、应回未回 ${st.notBought} 人）；`);
+  lines.push(`${wkLabel}小结（${fam}）：`);
+  lines.push(`1. ${wkLabel}应回购 ${st.due} 人（应回已回 ${st.bought} 人、应回未回 ${st.notBought} 人）；`);
   lines.push(`2. 未购药原因：${parts.join("、")}；`);
   const pReasons = st.postponeReasons.length ? `（${st.postponeReasons.slice(0, 5).join("、")}）` : "";
   lines.push(`4. 下周预计复购 ${st.normal + st.postpone} 人，预计正常回购 ${st.normal} 人，推迟 ${st.postpone} 人${pReasons}`);
@@ -1877,13 +1888,13 @@ function renderSummaryPanel() {
   document.querySelectorAll("#summaryFamChips .chip").forEach(ch => {
     ch.onclick = () => { state.selFam = ch.dataset.fam; renderSummaryPanel(); };
   });
-  // 小结固定统计「本周」（参考日期所在自然周，周一~周日完整周，与状态机一致）
+  // 小结统计「所选周」（跟随 上周/本周/下周 视图；周一~周日完整周，与状态机一致）
   // 统计范围跟随 医院/药房 筛选（多选=或）
-  const W0 = getWeekRange("this");
+  const W0 = getWeekRange(state.weekSel);
   const scope = [];
   if (state.hospitals.size) scope.push("医院" + state.hospitals.size + "家");
   if (state.pharmacies.size) scope.push("药房" + state.pharmacies.size + "家");
-  $("#periodFixedLabel").textContent = `本周：${W0.start} ~ ${W0.end}` + (scope.length ? `（已按 ${scope.join("、")} 统计）` : "");
+  $("#periodFixedLabel").textContent = `${WEEK_LABEL[state.weekSel] || "本周"}：${W0.start} ~ ${W0.end}` + (scope.length ? `（已按 ${scope.join("、")} 统计）` : "");
   // 文案
   const { text } = buildSummaryText(state.selFam);
   $("#summaryText").textContent = text;
@@ -2323,6 +2334,12 @@ async function doExport(desen) {
     });
     vals.push(r.fu_note || "");
     const row = ws.addRow(vals);
+    // 应购药日期落在所选周：整行浅金底色（与列表特殊底色一致；列专属样式随后覆盖）
+    if (r.due_in_week) {
+      row.eachCell(c => {
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3D6" } };
+      });
+    }
     // 状态列：浅色填充 + 深色字
     const st = EXPORT_CAT_STYLE[r.status];
     if (idxStatus >= 0 && st) {

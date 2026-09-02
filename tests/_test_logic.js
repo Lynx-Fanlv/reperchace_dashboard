@@ -63,6 +63,7 @@ function assert(cond, msg) {
     [fu('甲', '10000000001', '2026-08-10', '百泽安', null)], {});
   console.log('1 应购本周一:', r.status, '/', r.repur_part, '| reason:', r.reason || '(空)', '| 应购日', r.due_date);
   assert(r.status === '应回购' && r.repur_part === '应回未回' && r.reason === '', '场景1 应购日∈本周未购→应回购·应回未回/无原因标注');
+  assert(r.due_in_week === true, '场景1b 应购日∈本周 → due_in_week=true（周内应购置顶）');
 
   // 场景2：应购日∈本周 + 随访停药 → 应回购·应回未回 / 自动判定原因=脱落·其他
   r = run([sales('乙', '10000000002', '2026-08-03', '百泽安')],
@@ -78,6 +79,7 @@ function assert(cond, msg) {
   r = run([sales('丁', '10000000004', '2026-07-20', '百泽安')], [], {});
   console.log('4 应购 08-10(<本周一):', r.status);
   assert(r.status === '已逾期', '场景4 应购日<周首→已逾期');
+  assert(r.due_in_week === false, '场景4b 应购日<周首 → due_in_week=false');
 
   // 场景5：两笔购药但本周无购药、应购日<周首 → 已逾期（不构成已回购）
   r = run([
@@ -94,6 +96,7 @@ function assert(cond, msg) {
   ], [], {});
   console.log('6 本周购药:', r.status, '/', r.repur_part, '| 预判应购=', r.due_date, '| 偏移=', r.due_offset);
   assert(r.status === '应回购' && r.repur_part === '应回已回', '场景6a 当周购药→已回购');
+  assert(r.due_in_week === false, '场景6e 应回已回预判应购08-22∉本周 → due_in_week=false');
   assert(r.due_date === '2026-08-22', '场景6b 应购药日期=预判应购日(上次购药+周期)');
   assert(r.due_offset === 3, '场景6c 偏移=+3（延期3天）');
 
@@ -122,6 +125,7 @@ function assert(cond, msg) {
   r = run([sales('壬', '10000000009', '2026-08-03', '百泽安')], [], { "壬": 30 });
   console.log('9 应购 09-02(>本周日):', r.status);
   assert(r.status === '未到期', '场景9 应购日>周末→未到期');
+  assert(r.due_in_week === false, '场景9b 应购日>周末 → due_in_week=false');
 
   console.log('\n===== 周切换（同一数据不同周 → 状态重算） =====');
   // 场景10：应购 08-23（上周日）：上周→应回购；本周→已逾期
@@ -130,9 +134,11 @@ function assert(cond, msg) {
   r = App.buildRows()[0];
   console.log('10 应购08-23 | 上周视角:', r.status, '/', r.repur_part);
   assert(r.status === '应回购' && r.repur_part === '应回未回', '场景10a 应购日∈上周→上周应回购·应回未回');
+  assert(r.due_in_week === true, '场景10c 上周视图下应购日∈上周 → due_in_week=true');
   App.state.weekSel = 'this';
   r = App.buildRows()[0];
   assert(r.status === '已逾期', '场景10b 同一数据切本周→应购日<周首→已逾期');
+  assert(r.due_in_week === false, '场景10d 切本周 → due_in_week=false');
 
   // 场景11：应购 09-02：下周→应回购；本周→未到期
   r = run([sales('癸', '10000000011', '2026-08-03', '百泽安')], [], { "癸": 30 }); // 应购 09-02
