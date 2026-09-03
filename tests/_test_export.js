@@ -85,7 +85,7 @@ const App = global.AppCore;
     !(r3.getCell(1).fill && r3.getCell(1).fill.fgColor && r3.getCell(1).fill.fgColor.argb) &&
     r2.getCell(idxStatus).value === '应回未回' &&
     r2.getCell(idxStatus).fill.fgColor.argb === 'FFFCEBEB' &&
-    r2.getCell(idxReason).value === '延迟用药' &&
+    r2.getCell(idxReason).value === '推迟购药' &&
     r2.getCell(idxReason).font.color.argb === 'FFE8590C' &&
     r3.getCell(idxStatus).fill.fgColor.argb === 'FFFAEEDA' &&
     r3.getCell(idxDays).font.color.argb === 'FFE03131';

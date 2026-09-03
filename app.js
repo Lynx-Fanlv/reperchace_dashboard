@@ -20,19 +20,21 @@ const REPUR_PART_COLOR = {
 
 // ---- 未购药原因分类树（可维护：增删改 / 加子类 / 恢复默认）----
 // 层级结构：父类人数 = 其子类人数之和；默认「脱落」为父类 + 5 个子类
+// 默认结构：推迟购药 / 延长周期（医嘱·自行）/ 脱落（换药·经济·去世·其他）/ 转渠道 / 随访失败未探寻原因
 const DEFAULT_REASON_TREE = [
-  { key: "delay", label: "延迟用药", children: [] },
+  { key: "delay", label: "推迟购药", children: [] },
+  { key: "prolong", label: "延长周期", children: [
+    { key: "prolong_doctor", label: "医嘱" },
+    { key: "prolong_self", label: "自行" },
+  ]},
   { key: "dropout", label: "脱落", children: [
-    { key: "dropout_effect", label: "效果不佳" },
-    { key: "dropout_recover", label: "自觉好转" },
-    { key: "dropout_adr", label: "不良反应" },
+    { key: "dropout_switch", label: "换药" },
     { key: "dropout_econ", label: "经济" },
+    { key: "dropout_death", label: "去世" },
     { key: "dropout_other", label: "其他" },
   ]},
   { key: "channel", label: "转渠道", children: [] },
   { key: "fuFail", label: "随访失败未探寻原因", children: [] },
-  { key: "prolong", label: "医嘱延长", children: [] },
-  { key: "switch", label: "换药", children: [] },
 ];
 function cloneReasonTree(t) { return (t || []).map(n => ({ key: n.key, label: n.label, children: (n.children || []).map(c => ({ key: c.key, label: c.label, children: [] })) })); }
 // 展平：-> [{ key, label, parent, path }]（path 用于展示，如「脱落·效果不佳」）
@@ -272,15 +274,17 @@ function buildRows() {
       const sig = matched ? M.followupSignal(matched) : { signal: "unknown", reason: "" };
       const days = diffDays(dueDate, today); // 正=未来，负=逾期（相对真实今天，供列上标注）
       const subKey = k + "::" + fam;
-      // 自动判定原因 key（dropout 细分为 dropout_xxx；仅保留分类树中存在的分类）
+      // 自动判定原因 key（dropout 细分 dropout_switch/econ/death/other；prolong 细分 prolong_doctor/self；仅保留分类树中存在的分类）
       const treeKeys = flattenReasonTree(state.reasonTree).map(f => f.key);
       let autoReason = "";
       if (matched) {
         const c = M.classifyFuReason(matched);
         if (c) {
           const k = c.key === "dropout"
-            ? ("dropout_" + (c.detail === "效果不佳" ? "effect" : c.detail === "自觉好转" ? "recover" : c.detail === "不良反应" ? "adr" : c.detail === "经济" ? "econ" : "other"))
-            : c.key;
+            ? ("dropout_" + (c.detail === "换药" ? "switch" : c.detail === "经济" ? "econ" : c.detail === "去世" ? "death" : "other"))
+            : c.key === "prolong"
+              ? ("prolong_" + (c.detail === "医嘱" ? "doctor" : "self"))
+              : c.key;
           if (treeKeys.includes(k)) autoReason = k;
         }
       }
@@ -759,7 +763,8 @@ function buildSummaryStats(fam) {
       normal++;
     }
   }
-  const dTotal = cnt.dropout_effect + cnt.dropout_recover + cnt.dropout_adr + cnt.dropout_econ + cnt.dropout_other;
+  // 脱落合计 = 父类人数（子类之和，已在上面汇总）
+  const dTotal = cnt.dropout || 0;
   // 应回购（总集）= 应回未回（应购日∈本周未购）+ 应回已回（当周购药，含提前购药）
   const dueTotal = notBoughtKeys.length + boughtKeys.size;
   return { start: W.start, end: W.end, nStart, nEnd, due: dueTotal, bought: boughtKeys.size, notBought: notBoughtKeys.length,

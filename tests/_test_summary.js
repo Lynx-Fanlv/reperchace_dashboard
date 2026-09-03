@@ -105,9 +105,11 @@ function assert(cond, msg) {
   assert(st.bought === 1, `应回已回 1 人（丙，当周购药）（实际 ${st.bought}）`);
   assert(st.notBought === 6, `应回未回 6 人（实际 ${st.notBought}）`);
   assert(st.due === st.bought + st.notBought, '应回购 = 应回已回 + 应回未回（自洽）');
-  assert(st.cnt.delay === 1 && st.cnt.dropout_effect === 1 && st.cnt.channel === 1 &&
-    st.cnt.fuFail === 1 && st.cnt.prolong === 1 && st.cnt.switch === 1, '原因细分 各1人');
-  assert(st.dTotal === 1, '脱落合计 1 人');
+  // 新分类树：推迟购药 / 延长周期(医嘱·自行) / 脱落(换药·经济·去世·其他) / 转渠道 / 随访失败
+  assert(st.cnt.delay === 1 && st.cnt.prolong === 1 && st.cnt.prolong_doctor === 1 && st.cnt.prolong_self === 0 &&
+    st.cnt.dropout === 2 && st.cnt.dropout_switch === 1 && st.cnt.dropout_econ === 0 && st.cnt.dropout_death === 0 && st.cnt.dropout_other === 1 &&
+    st.cnt.channel === 1 && st.cnt.fuFail === 1, '原因细分：推迟1/延长周期1(医嘱1)/脱落2(换药1·其他1)/转渠道1/随访失败1');
+  assert(st.dTotal === 2, '脱落合计 2 人');
   assert(st.normal === 1 && st.postpone === 1, `下周预计 正常1/推迟1（实际 正常${st.normal}/推迟${st.postpone}）`);
   assert(st.nextTotal === 2, `下周预计合计 2 人（壬/癸）（实际 ${st.nextTotal}）`);
 
@@ -126,28 +128,28 @@ function assert(cond, msg) {
   console.log(text.split('\n').map(l => '  | ' + l).join('\n'));
   assert(text.includes('本周小结（百泽安）：'), '标题按品种');
   assert(text.includes('1. 本周应回购 7 人（应回已回 1 人、应回未回 6 人）；'), '第1行数字正确');
-  assert(text.includes('①延迟用药1人、②脱落1人（效果不佳1/自觉好转0/不良反应0/经济0/其他0）、③转渠道1人、④随访失败未探寻原因1人、⑤医嘱延长1人、⑥换药1人'), '第2行原因正确');
+  assert(text.includes('①推迟购药1人、②延长周期1人（医嘱1/自行0）、③脱落2人（换药1/经济0/去世0/其他1）、④转渠道1人、⑤随访失败未探寻原因1人'), '第2行原因正确');
   assert(text.includes('4. 下周预计复购 2 人，预计正常回购 1 人，推迟 1 人') && text.includes('出差'), '第4行下周预计+推迟原因');
 
   console.log('\n===== ④ 患者标注驱动统计（明细点选原因 → 小结跟随） =====');
-  // 将「庚」（原自动判定=换药）在原因列覆盖为「延迟用药」→ 延迟用药 1→2、换药 1→0
+  // 将「庚」（原自动判定=脱落·换药）在原因列覆盖为「推迟购药」→ 推迟1→2、脱落·换药1→0、脱落父类2→1
   App.STORE.reasonOverrides['10000000007::百泽安'] = 'delay';
   await App.refresh(); // 重建全量行（行 reason = 人工覆盖优先）
   const stD = App.buildSummaryStats('百泽安');
-  assert(stD.cnt.delay === 2 && stD.cnt.switch === 0, `覆盖庚为延迟用药 → delay2/switch0（实际 ${stD.cnt.delay}/${stD.cnt.switch}）`);
+  assert(stD.cnt.delay === 2 && stD.cnt.dropout_switch === 0 && stD.cnt.dropout === 1, `覆盖庚为推迟购药 → delay2/dropout_switch0/dropout1（实际 ${stD.cnt.delay}/${stD.cnt.dropout_switch}/${stD.cnt.dropout}）`);
   const text2 = App.buildSummaryText('百泽安').text;
-  assert(text2.includes('①延迟用药2人') && text2.includes('⑥换药0人'), '小结文案跟随原因标注变化');
+  assert(text2.includes('①推迟购药2人') && text2.includes('③脱落1人（换药0'), '小结文案跟随原因标注变化');
   App.STORE.reasonOverrides = {}; await App.refresh();
 
   console.log('\n===== ④b 小结人数人工修正（fuAdj） =====');
-  // 平级项修正：延迟用药 自动1 → 人工3
+  // 平级项修正：推迟购药 自动1 → 人工3
   App.state.fuAdj['百泽安'] = { delay: 3 };
   const textF = App.buildSummaryText('百泽安').text;
-  assert(textF.includes('①延迟用药3人'), `人工修正后延迟用药 3 人（实际: ${textF.split('\n')[2]}）`);
-  // 叶子修正 → 父类=子类修正之和
-  App.state.fuAdj['百泽安'] = { dropout_effect: 2, dropout_recover: 1 };
+  assert(textF.includes('①推迟购药3人'), `人工修正后推迟购药 3 人（实际: ${textF.split('\n')[2]}）`);
+  // 叶子修正 → 父类=子类修正之和（换药2+经济1+去世0+其他1(乙自动) = 4）
+  App.state.fuAdj['百泽安'] = { dropout_switch: 2, dropout_econ: 1 };
   const textF2 = App.buildSummaryText('百泽安').text;
-  assert(textF2.includes('②脱落3人（效果不佳2/自觉好转1'), '父类脱落=子类修正之和（3=2+1）');
+  assert(textF2.includes('③脱落4人（换药2/经济1'), '父类脱落=子类修正之和（4=2+1+0+1）');
   App.state.fuAdj = {};
 
   console.log('\n===== ④c 下周预计人数人工修正 =====');
@@ -158,10 +160,10 @@ function assert(cond, msg) {
   App.state.fuAdj = {};
 
   console.log('\n===== ⑤ 分类维护：新增/删除分类 → 文案与标注跟随 =====');
-  // 新增平级分类
+  // 新增平级分类（默认树 5 顶项 → 新项为第⑥）
   App.addReason('新分类X');
   let textN = App.buildSummaryText('百泽安').text;
-  assert(textN.includes('⑦新分类X0人'), `新增分类 → 文案出现第⑦项（实际: ${textN.split('\n')[2]}）`);
+  assert(textN.includes('⑥新分类X0人'), `新增分类 → 文案出现第⑥项（实际: ${textN.split('\n')[2]}）`);
   // 给「庚」标注新分类 → 统计 1 人
   const newKey = App.state.reasonTree[App.state.reasonTree.length - 1].key;
   App.STORE.reasonOverrides['10000000007::百泽安'] = newKey;
@@ -176,7 +178,7 @@ function assert(cond, msg) {
   // 恢复默认树
   App.state.reasonTree = App.cloneReasonTree(App.DEFAULT_REASON_TREE); await App.refresh();
   const textR = App.buildSummaryText('百泽安').text;
-  assert(textR.includes('⑥换药1人'), '恢复默认后文案还原');
+  assert(textR.includes('⑤随访失败未探寻原因1人'), '恢复默认后文案还原');
 
   console.log('\n===== ⑥ 周期控件不影响（统计跟随周视图） =====');
   // 小结统计范围由 上周/本周/下周 视图决定；近7天/自定义遗留选项不影响

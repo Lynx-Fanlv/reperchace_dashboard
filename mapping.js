@@ -216,31 +216,31 @@ function followupSignal(fu) {
 }
 
 // ---- 未购药原因细分（整体小结用，按模板顺序判定，每人不重复计数）----
+// 分类（可维护树）：推迟购药 / 延长周期(医嘱·自行) / 脱落(换药·经济·去世·其他) / 转渠道 / 随访失败未探寻原因
 function RE_DELAY_TXT() { return /延迟|推迟|延后|未按时|过几天|晚几天|暂缓/; }
-function RE_EFFECT_TXT() { return /效果不佳|疗效不好|疗效差|没效果|无效/; }
-function RE_RECOVER_TXT() { return /自觉好转|症状好转|好转/; }
-function RE_ADR_TXT() { return /不良反应|副作用|不耐受|过敏|难受|不舒服/; }
 function RE_ECON_TXT() { return /经济|费用|太贵|负担|没钱|买不起|吃不起|贵/; }
 function RE_CHANNEL_TXT() { return /转渠道|转院|转店|换店|其他药房|异地|外地|其他医院/; }
 function RE_FUFAIL_TXT() { return /随访失败|联系不上|拒访|拒绝随访|无法联系|关机|无人接听/; }
 function RE_PROLONG_TXT() { return /医嘱延长|遵医嘱延长|医生建议延长|延长用药|延长疗程/; }
+function RE_PROLONG_DOCTOR_TXT() { return /医嘱|遵医嘱|遵医|医生建议|按医嘱/; }
 function RE_SWITCH_TXT() { return /换药|换品种|更换药品|换用|改用|换成/; }
+function RE_DEATH_TXT() { return /去世|死亡|过世|逝世/; }
 // 脱落判定专用（排除「转渠道/转院」，避免与③转渠道冲突）
 function RE_DROPOUT_ONLY() { return /停药|停用|脱落|失访|去世|拒绝随访|不再治疗|放弃治疗|不治疗/; }
 
-// 返回 { key: 'delay'|'dropout'|'channel'|'fuFail'|'prolong'|'switch'|null, detail: ''|'效果不佳'|'自觉好转'|'不良反应'|'经济'|'其他' }
+// 返回 { key: 'delay'|'dropout'|'channel'|'fuFail'|'prolong'|null,
+//         detail: dropout→'换药'|'经济'|'去世'|'其他'；prolong→'医嘱'|'自行'；其余 '' }
 function classifyFuReason(fu) {
   if (!fu) return null;
   const note = [fu.follow_note, fu.delay_reason, fu.stop_reason, fu.dropout_reason].filter(Boolean).join(" ");
   const ts = fu.task_status || "";
-  // ① 延迟用药
+  // ① 推迟购药
   if (fu.delay_reason || RE_DELAY_TXT().test(note)) return { key: "delay", detail: "" };
-  // ② 脱落（细分：效果不佳/自觉好转/不良反应/经济/其他）
+  // ② 脱落（细分：换药/经济/去世/其他；去世最明确优先）
   if (fu.stop_reason || (fu.is_dropout && /^(是|有)/.test(fu.is_dropout)) || RE_DROPOUT_ONLY().test(note)) {
     let d = "其他";
-    if (RE_EFFECT_TXT().test(note)) d = "效果不佳";
-    else if (RE_RECOVER_TXT().test(note)) d = "自觉好转";
-    else if (RE_ADR_TXT().test(note)) d = "不良反应";
+    if (RE_DEATH_TXT().test(note)) d = "去世";
+    else if (RE_SWITCH_TXT().test(note)) d = "换药";
     else if (RE_ECON_TXT().test(note)) d = "经济";
     return { key: "dropout", detail: d };
   }
@@ -250,10 +250,12 @@ function classifyFuReason(fu) {
   if (RE_FUFAIL_TXT().test(note) || (/执行失败|超期未完成/.test(ts) && /随访|购药/.test(fu.summary_type || ""))) {
     return { key: "fuFail", detail: "" };
   }
-  // ⑤ 医嘱延长
-  if (RE_PROLONG_TXT().test(note)) return { key: "prolong", detail: "" };
-  // ⑥ 换药
-  if (RE_SWITCH_TXT().test(note)) return { key: "switch", detail: "" };
+  // ⑤ 延长周期（医嘱 / 自行）
+  if (RE_PROLONG_TXT().test(note)) {
+    return { key: "prolong", detail: RE_PROLONG_DOCTOR_TXT().test(note) ? "医嘱" : "自行" };
+  }
+  // ⑥ 换药（未命中停药等脱落信号时仍归「脱落·换药」）
+  if (RE_SWITCH_TXT().test(note)) return { key: "dropout", detail: "换药" };
   return null;
 }
 
