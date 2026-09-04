@@ -34,7 +34,7 @@ const App = global.AppCore;
     { _key: '13800001111', product: '百泽安', patient_name: '张三', phone: '13800001111', physician: '李医生',
       hospital: '人民医院', pharmacy: '药房A', last_purchase: '2026-08-01', cycle_days: 21, due_date: '2026-08-22',
       days_to_due: 2, fu_time: '2026-08-15', fu_type: '复购确认随访任务', executor: '刘倩', fu_note: '患者表示会按时购药',
-      fu_signal: '', status: '应回购', repur_part: '应回未回', reason: 'delay', due_in_week: true },
+      fu_signal: '', status: '应回购', repur_part: '应回未回', reason: 'delay', due_in_week: true, member_id: 'VIP88888888' },
     { _key: '13900002222', product: '百悦泽', patient_name: '李四', phone: '13900002222', physician: '王医生',
       hospital: '中医院', pharmacy: '药房B', last_purchase: '2026-07-01', cycle_days: 28, due_date: '2026-07-29',
       days_to_due: -5, fu_time: '2026-07-20', fu_type: '日常随访任务', executor: '高金敏', fu_note: '',
@@ -91,4 +91,19 @@ const App = global.AppCore;
     r3.getCell(idxDays).font.color.argb === 'FFE03131';
   console.log(ok ? '\n✅ 导出内容 + 浅色样式验证通过' : '\n❌ 校验失败');
   if (!ok) process.exit(1);
+
+  // —— 追加：仅会员号（maskMode=id）导出：患者列=会员号、医生列空 ——
+  App.state.maskMode = 'id';
+  captured = null;
+  await App.doExport(true);
+  const ab2 = await captured.arrayBuffer();
+  const wb2 = new ExcelJS.Workbook();
+  await wb2.xlsx.load(ab2);
+  const ws2 = wb2.getWorksheet('预计购药名单');
+  const r2id = ws2.getRow(2);
+  console.log('[仅会员号] 患者列=', r2id.getCell(1).value, '(期望 VIP88888888) | 医生列=', r2id.getCell(3).value, '(期望空)');
+  const okId = r2id.getCell(1).value === 'VIP88888888' && (r2id.getCell(3).value === null || r2id.getCell(3).value === '');
+  console.log(okId ? '✅ 仅会员号导出验证通过' : '❌ 仅会员号导出失败');
+  App.state.maskMode = 'edge';
+  if (!okId) process.exit(1);
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

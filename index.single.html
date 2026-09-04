@@ -430,8 +430,9 @@
       </span>
       <span class="desen-tog" style="gap:6px">
         <span class="dt-grp"><span class="dt-lbl">姓名脱敏方式</span>
-          <button class="dt-btn mm-btn active" data-mm="edge">首尾保留</button>
-          <button class="dt-btn mm-btn" data-mm="first">首字保留</button>
+          <button class="dt-btn mm-btn" data-mm="first">保留首字</button>
+          <button class="dt-btn mm-btn active" data-mm="edge">保留首+末字</button>
+          <button class="dt-btn mm-btn" data-mm="id">仅会员号</button>
           <button class="dt-btn mm-btn" data-mm="all">全部隐藏</button></span>
       </span>
       <span class="hint">展示层实时切换；导出脱敏名单 / 脱敏快照与所选方式保持一致</span>
@@ -1239,7 +1240,7 @@ const state = {
   refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在自然周（周一~周日），可改以回看历史周
   stdCycle: {},   // 标准周期仅按「上传数据中出现品种」动态生成，不写死内置商品
   plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示
-  maskMode: "edge",   // 姓名/医生脱敏方式：edge=首尾保留、first=首字保留、all=全部隐藏
+  maskMode: "edge",   // 姓名/医生脱敏方式：first=保留首字、edge=保留首+末字、id=仅会员号、all=全部隐藏
   hiddenCols: new Set(),
   page: 1, pageSize: 50,
   // 整体小结：固定统计「本周」+ 选中品种 + 未购药原因分类树（可维护）
@@ -1286,7 +1287,7 @@ function diffDays(a, b) { // a - b（天）
 function phoneDigits(v) { return P.phoneDigits(v); }
 
 // 脱敏规则（展示层按 state 开关实时切换；导出/快照与所选脱敏方式保持一致）
-// maskMode（state.maskMode）：edge=首尾保留（张*三/欧**德）、first=首字保留（张**/欧***）、all=全部隐藏（***）
+// maskMode（state.maskMode）：first=保留首字（张**/欧***）、edge=保留首+末字（张*三/欧**德）、id=仅会员号（患者列显示会员号）、all=全部隐藏（***）
 // 替换几个字符就有几个 *
 function maskPersonName(v, mode) {
   if (!v) return "";
@@ -1298,18 +1299,27 @@ function maskPersonName(v, mode) {
   if (s.length === 2) return s[0] + "*";
   return s[0] + "*".repeat(s.length - 2) + s[s.length - 1];
 }
-function maskName(v) { return maskPersonName(v, state.maskMode); }
+function maskName(v) { return maskPersonName(v, state.maskMode === "id" ? "edge" : state.maskMode); }
 function maskPhone(v) {
   if (!v) return "";
   const d = String(v).replace(/\D/g, "");
   return d.length >= 7 ? d.slice(0, 3) + "****" + d.slice(-4) : String(v).replace(/\d/g, "*");
 }
-function maskDoctor(v) { return maskPersonName(v, state.maskMode); }
-// 按当前脱敏开关取展示值
+function maskDoctor(v) { return maskPersonName(v, state.maskMode === "id" ? "edge" : state.maskMode); }
+// 按当前脱敏开关取展示值（mode=id「仅会员号」：患者列=会员号、医生列无会员身份显示 —）
 function disp(r, key) {
-  if (key === "patient_name") return state.plainName ? (r.patient_name || "") : maskName(r.patient_name);
+  const idOnly = state.maskMode === "id";
+  if (key === "patient_name") {
+    if (state.plainName) return r.patient_name || "";
+    if (idOnly) return r.member_id ? r.member_id : "—";
+    return maskName(r.patient_name);
+  }
   if (key === "phone") return state.plainPhone ? (r.phone || "") : maskPhone(r.phone);
-  if (key === "physician") return state.plainDoctor ? (r.physician || "") : maskDoctor(r.physician);
+  if (key === "physician") {
+    if (state.plainDoctor) return r.physician || "";
+    if (idOnly) return "—";
+    return maskDoctor(r.physician);
+  }
   return r[key] == null ? "" : r[key];
 }
 // 手动备注的存储键（患者 × 品种）
@@ -1352,10 +1362,11 @@ function buildRows() {
     if (s.patient_name) p.name = s.patient_name;
     if (s.phone) p.phone = s.phone;
     const fam = s.product;
-    const bp = (p.byProduct[fam] = p.byProduct[fam] || { dates: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "" });
+    const bp = (p.byProduct[fam] = p.byProduct[fam] || { dates: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "", member_id: s.member_id || "" });
     bp.dates.push(s.sales_time);
     if (s.hospital) bp.hospital = s.hospital;
     if (s.pharmacy) bp.pharmacy = s.pharmacy;
+    if (s.member_id) bp.member_id = s.member_id; // 会员号取最近购药记录的（脱敏方式「仅会员号」用）
     if (s.physician) bp.physician = s.physician;
   }
 
@@ -1463,6 +1474,7 @@ function buildRows() {
         _key: k, product: fam,
         patient_name: p.name, phone: p.phone, physician: bp.physician,
         hospital: bp.hospital, pharmacy: bp.pharmacy,
+        member_id: bp.member_id || "", // 会员号（脱敏方式「仅会员号」时患者列显示）
         last_purchase: lastPurchase, cycle_days: cycle,
         // 应回已回行：due_date 显示「预判应购日」（不呈现下次应购时间）；无预判基准显示空（渲染为 —）
         due_date: rowDue,
@@ -2471,9 +2483,18 @@ async function doExport(desen) {
         if (r.repur_part === "应回已回") return "已购药";
         return "";
       }
-      if (k === "patient_name") return desen ? maskName(r.patient_name) : (r.patient_name || "");
+      // 仅会员号模式（id）：患者列导出会员号、医生列空（与列表展示一致）
+      if (k === "patient_name") {
+        if (!desen) return r.patient_name || "";
+        if (state.maskMode === "id") return r.member_id || "";
+        return maskName(r.patient_name);
+      }
       if (k === "phone") return desen ? maskPhone(r.phone) : (r.phone || "");
-      if (k === "physician") return desen ? maskDoctor(r.physician) : (r.physician || "");
+      if (k === "physician") {
+        if (!desen) return r.physician || "";
+        if (state.maskMode === "id") return "";
+        return maskDoctor(r.physician);
+      }
       // 应回已回行：距今天数列导出「N天前已购药」（与展示一致），应购药日期列已是预判应购日
       if (k === "days_to_due" && r.repur_part === "应回已回") {
         return r.purchase_days_ago != null ? r.purchase_days_ago + "天前已购药" : "";
