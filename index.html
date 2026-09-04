@@ -2508,20 +2508,29 @@ async function doSnapshot(desen) {
       note: "预计购药分析快照",
     };
     const dataJson = JSON.stringify(snap).replace(/</g, "\\u003c");
-    const dataScript = `<\script>window.__SNAP__=${dataJson};<\/script>`;
-    const bootstrap = `<\script>(function(){
+    // 启动脚本（快照只读模式加载数据）
+    const bootCode = `(function(){
       if(window.__SNAP__&&window.AppCore){window.AppCore.loadSnapshot(window.__SNAP__);}
-      else{var ld=document.getElementById('loading');if(ld){ld.querySelector('.txt').textContent='快照加载失败：脚本未内联。请用 index.html 生成快照。';ld.classList.remove('hidden');}}
-    })();<\/script>`;
-    let html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
-    // 快照为只读视图，剥离库代码（兼容两种形态：外链 src 标签 / 单文件版内联 id 标记块），
-    // 避免 file:// 下加载失败或快照体积膨胀
-    html = html.replace(/<script[^>]*src="vendor\/xlsx\.full\.min\.js"[^>]*><\/script>/gi, "");
-    html = html.replace(/<script[^>]*src="vendor\/exceljs\.min\.js"[^>]*><\/script>/gi, "");
-    html = html.replace(/<script id="__vnd_xlsx__"[\s\S]*?<\/script>/gi, "");
-    html = html.replace(/<script id="__vnd_exceljs__"[\s\S]*?<\/script>/gi, "");
-    const bodyIdx = html.lastIndexOf("</body>");
-    html = html.slice(0, bodyIdx) + dataScript + bootstrap + "\n" + html.slice(bodyIdx);
+      else{var ld=document.getElementById('loading');if(ld){ld.querySelector('.txt').textContent='快照加载失败：应用脚本未加载。';ld.classList.remove('hidden');}}
+    })();`;
+    // 剥离库代码 + 注入数据/启动脚本：全部用真实 DOM 操作（快照为只读视图，去掉 Excel 解析库减小体积）。
+    // 不能用文本正则：应用代码自身内联时也含 <script>/</body> 等字面，正则会误删应用代码或注入错位。
+    const isLib = s => {
+      const src = s.getAttribute && s.getAttribute("src") || "";
+      const id = s.id || "";
+      return /vendor\/(xlsx|exceljs)\.min\.js$/.test(src) || id === "__vnd_xlsx__" || id === "__vnd_exceljs__";
+    };
+    const libScripts = Array.from(document.querySelectorAll("script")).filter(isLib);
+    libScripts.forEach(s => s.remove());
+    const ds = document.createElement("script");
+    ds.textContent = "window.__SNAP__=" + dataJson;
+    const bs = document.createElement("script");
+    bs.textContent = bootCode;
+    document.body.appendChild(ds);
+    document.body.appendChild(bs);
+    const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+    ds.remove(); bs.remove();
+    libScripts.forEach(s => document.head.appendChild(s)); // 放回页面（Excel 导出仍可用）
     download(new Blob([html], { type: "text/html" }),
       desen ? "预计购药名单_脱敏快照.html" : "预计购药名单_不脱敏快照.html");
   } catch (err) {

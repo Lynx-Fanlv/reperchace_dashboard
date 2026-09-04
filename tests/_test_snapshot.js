@@ -43,8 +43,8 @@ if (fs.existsSync(singlePath)) {
   s = s.replace(/<script[^>]*src="vendor\/exceljs\.min\.js"[^>]*><\/script>/gi, '');
   s = s.replace(/<script id="__vnd_xlsx__"[\s\S]*?<\/script>/gi, '');
   s = s.replace(/<script id="__vnd_exceljs__"[\s\S]*?<\/script>/gi, '');
-  const vndLeft = (s.match(/__vnd_(xlsx|exceljs)__/g) || []).length;
-  console.log('  剥离后 __vnd 残留:', vndLeft, '(应为0) | 剥离后字节:', s.length);
+  const vndLeft = (s.match(/<script\s+id="__vnd_(xlsx|exceljs)__"/g) || []).length; // 仅统计真实标签（应用代码里的字面字符串不算）
+  console.log('  剥离后 __vnd 标签残留:', vndLeft, '(应为0) | 剥离后字节:', s.length);
   if (extLinks !== 0 || vndLeft !== 0) throw new Error('单文件版剥离验证失败');
   console.log('  ✅ 单文件版剥离验证通过');
 } else {
