@@ -278,6 +278,8 @@
   .rm-acts{display:inline-flex;gap:10px}
   .rm-acts a{font-size:12px;color:var(--brand);cursor:pointer}
   .rm-acts a[data-act="del"]{color:#e03131}
+  .sp-scope{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+  .sp-scope input{cursor:pointer;accent-color:var(--brand)}
   .rm-foot{display:flex;gap:8px}
 </style>
 </head>
@@ -342,6 +344,8 @@
             <span class="sp-lbl">品种</span>
             <span class="sp-chips" id="summaryFamChips"></span>
           </span>
+          <label class="sp-scope" title="小结末尾是否列出所选医院/药房名单">
+            <input type="checkbox" id="scopeNamesCb" checked> 小结含所选医院名单</label>
           <button class="btn ghost sm" id="manageReasonBtn">管理分类</button>
           <button class="btn ghost sm" id="copySummaryBtn">复制小结</button>
         </span>

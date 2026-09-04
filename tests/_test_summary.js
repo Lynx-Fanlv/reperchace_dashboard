@@ -129,7 +129,8 @@ function assert(cond, msg) {
   assert(text.includes('本周小结（百泽安）：'), '标题按品种');
   assert(text.includes('1. 本周应回购 7 人（应回已回 1 人、应回未回 6 人）；'), '第1行数字正确');
   assert(text.includes('①推迟购药1人、②延长周期1人（医嘱1/自行0）、③脱落2人（换药1/经济0/去世0/其他1）、④转渠道1人、⑤随访失败未探寻原因1人'), '第2行原因正确');
-  assert(text.includes('4. 下周预计复购 2 人，预计正常回购 1 人，推迟 1 人') && text.includes('出差'), '第4行下周预计+推迟原因');
+  assert(text.includes('3. 下周预计复购 2 人，预计正常回购 1 人，推迟 1 人') && text.includes('出差'), '第3行下周预计+推迟原因');
+  assert(!/\n4\. /.test(text), '小结行号连续：无跳号(1/2/3)');
 
   console.log('\n===== ④ 患者标注驱动统计（明细点选原因 → 小结跟随） =====');
   // 将「庚」（原自动判定=脱落·换药）在原因列覆盖为「推迟购药」→ 推迟1→2、脱落·换药1→0、脱落父类2→1
@@ -156,7 +157,7 @@ function assert(cond, msg) {
   // next_normal/next_postpone 修正 → 复购总数=正常+推迟
   App.state.fuAdj['百泽安'] = { next_normal: 5, next_postpone: 2 };
   const textN4 = App.buildSummaryText('百泽安').text;
-  assert(textN4.includes('4. 下周预计复购 7 人，预计正常回购 5 人，推迟 2 人'), `下周预计修正生效（实际: ${textN4.split('\n')[3]}）`);
+  assert(textN4.includes('3. 下周预计复购 7 人，预计正常回购 5 人，推迟 2 人'), `下周预计修正生效（实际: ${textN4.split('\n')[3]}）`);
   App.state.fuAdj = {};
 
   console.log('\n===== ⑤ 分类维护：新增/删除分类 → 文案与标注跟随 =====');
@@ -233,6 +234,15 @@ function assert(cond, msg) {
   assert(fr.length === 2 && fr.every(r => r.pharmacy === 'P2'), `filterRows 药房筛选 → 仅 P2 行（实际 ${fr.length}）`);
   App.state.pharmacies.clear(); App.state.hospitals.clear();
   App.STORE.sales = S; await App.refresh();
+
+  console.log('\n===== ⑨ 小结可选呈现所选医院/药房名单（scopeNames 开关） =====');
+  App.state.hospitals.add('H2'); App.state.scopeNames = true; await App.refresh();
+  let tScope = App.buildSummaryText('百泽安').text;
+  assert(tScope.includes('统计范围（医院：H2）'), `开启开关 → 小结列出医院名单（实际: ${tScope.split('\n').pop()}）`);
+  App.state.scopeNames = false; await App.refresh();
+  tScope = App.buildSummaryText('百泽安').text;
+  assert(!tScope.includes('统计范围'), '关闭开关 → 小结不含范围行');
+  App.state.scopeNames = true; App.state.hospitals.clear(); await App.refresh();
 
   console.log('\n✅ 整体小结测试全部通过');
 })().catch(e => { console.error('FAIL', e); process.exit(1); });
