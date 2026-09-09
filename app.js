@@ -84,7 +84,7 @@ const state = {
   weekSel: "this", // 周视图：last=上周 / this=本周 / next=下周（单选，默认本周）
   refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在自然周（周一~周日），可改以回看历史周
   stdCycle: {},   // 标准周期仅按「上传数据中出现品种」动态生成，不写死内置商品
-  plainName: false, plainPhone: false,  // false=脱敏显示（医生与姓名共用同一开关与方式）
+  plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示（姓名/医生各自独立开关；脱敏掩码方式共用「姓名/医生脱敏方式」）
   maskMode: "edge",   // 姓名/医生脱敏方式：first=保留首字、edge=保留首+末字、id=仅会员号、all=全部隐藏
   hiddenCols: new Set(),
   page: 1, pageSize: 50,
@@ -517,6 +517,7 @@ function updateFilterInfo() {
   parts.push("时间=" + WEEK_LABEL[state.weekSel] + " " + W.start + "~" + W.end);
   const plain = [];
   if (state.plainName) plain.push("姓名明文");
+  if (state.plainDoctor) plain.push("医生明文");
   if (state.plainPhone) plain.push("电话明文");
   if (plain.length) parts.push("展示:" + plain.join("/"));
   $("#filterInfo").textContent = parts.length ? ("筛选：" + parts.join(" · ")) : "";
@@ -1299,7 +1300,7 @@ function bindDesenToggle() {
 }
 bindDesenToggle();
 function syncDesenBtns() {
-  const map = { name: state.plainName, phone: state.plainPhone };
+  const map = { name: state.plainName, phone: state.plainPhone, doctor: state.plainDoctor };
   document.querySelectorAll(".dt-btn").forEach(b => {
     const active = (b.dataset.mode === "plain") === !!map[b.dataset.field];
     b.classList.toggle("active", active);
@@ -1454,7 +1455,7 @@ async function doSnapshot(desen) {
         cats: [...state.cats], reasons: [...state.reasons], repurParts: [...state.repurParts],
         products: [...state.products],
         hospitals: [...state.hospitals], pharmacies: [...state.pharmacies], executors: [...state.executors],
-        plainName: state.plainName, plainPhone: state.plainPhone, scopeNames: state.scopeNames,
+        plainName: state.plainName, plainPhone: state.plainPhone, plainDoctor: state.plainDoctor, scopeNames: state.scopeNames,
         maskMode: state.maskMode,
         hiddenCols: [...state.hiddenCols],
         periodType: state.periodType, periodStart: state.periodStart, periodEnd: state.periodEnd,
@@ -1528,7 +1529,7 @@ function loadSnapshot(snap) {
   state.hospitals = new Set(s.hospitals || []);
   state.pharmacies = new Set(s.pharmacies || []);
   state.executors = new Set(s.executors || []);
-  state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone;
+  state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone; state.plainDoctor = !!s.plainDoctor;
   state.maskMode = s.maskMode || "edge";
   state.scopeNames = s.scopeNames !== false;
   if (s.hiddenCols) state.hiddenCols = new Set(s.hiddenCols);
