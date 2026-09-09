@@ -157,6 +157,7 @@ function normalizeSales(row, colmap, sourceFile, sheetName, i) {
     hospital: _gtext(row, colmap, "hospital") || null,
     pharmacy: _gtext(row, colmap, "pharmacy") || null,
     physician: _gtext(row, colmap, "physician") || null,
+    department: _gtext(row, colmap, "department") || null,
     indication: _gtext(row, colmap, "indication") || null,
     age: _gtext(row, colmap, "age") || null,
     gender: _gtext(row, colmap, "gender") || null,

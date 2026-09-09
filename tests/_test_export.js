@@ -62,7 +62,7 @@ const App = global.AppCore;
 
   // 行2：应回购 / 未购药原因=延迟用药
   const r2 = ws.getRow(2);
-  const idxStatus = 14, idxReason = 15, idxDays = 10; // 与 LIST_COLS 对应（1-based: status=14, reason=15, days=10）
+  const idxStatus = 15, idxReason = 16, idxDays = 11; // 与 LIST_COLS 对应（1-based，含科室列：days=11/status=15/reason=16）
   console.log('[行2] 患者=', r2.getCell(1).value, '| 状态列=', r2.getCell(idxStatus).value, '(期望 应回未回)',
     '| 底色:', r2.getCell(idxStatus).fill.fgColor && r2.getCell(idxStatus).fill.fgColor.argb, '期望 FFFCEBEB(浅红)');
   console.log('[行2] 未购药原因列=', r2.getCell(idxReason).value,
