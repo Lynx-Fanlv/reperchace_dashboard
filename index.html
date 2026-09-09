@@ -422,15 +422,12 @@
     <!-- 脱敏切换 + 列显隐 -->
     <div class="filterbar" style="margin-top:6px">
       <span class="desen-tog">
-        <span class="dt-grp"><span class="dt-lbl">姓名</span>
+        <span class="dt-grp"><span class="dt-lbl">姓名/医生</span>
           <button class="dt-btn active" data-field="name" data-mode="mask">脱敏</button>
           <button class="dt-btn" data-field="name" data-mode="plain">不脱敏</button></span>
         <span class="dt-grp"><span class="dt-lbl">电话</span>
           <button class="dt-btn active" data-field="phone" data-mode="mask">脱敏</button>
           <button class="dt-btn" data-field="phone" data-mode="plain">不脱敏</button></span>
-        <span class="dt-grp"><span class="dt-lbl">医生</span>
-          <button class="dt-btn active" data-field="doctor" data-mode="mask">脱敏</button>
-          <button class="dt-btn" data-field="doctor" data-mode="plain">不脱敏</button></span>
       </span>
       <span class="desen-tog" style="gap:6px">
         <span class="dt-grp"><span class="dt-lbl">姓名脱敏方式</span>
@@ -597,6 +594,7 @@ const KEYWORD_RULES = [
   ["hospital",      ["医疗单位", "首诊医院", "就诊医院", "医院"]],
   ["pharmacy",      ["药房名称", "门店", "药店名称", "药店", "药房"]],
   ["physician",     ["处方医生", "开单医生", "医生"]],
+  ["department",    ["处方科室", "科室", "就诊科室"]],
   ["indication",    ["适应症", "临床诊断", "诊断"]],
   ["age",           ["年龄"]],
   ["gender",        ["性别"]],
@@ -971,6 +969,7 @@ function normalizeSales(row, colmap, sourceFile, sheetName, i) {
     hospital: _gtext(row, colmap, "hospital") || null,
     pharmacy: _gtext(row, colmap, "pharmacy") || null,
     physician: _gtext(row, colmap, "physician") || null,
+    department: _gtext(row, colmap, "department") || null,
     indication: _gtext(row, colmap, "indication") || null,
     age: _gtext(row, colmap, "age") || null,
     gender: _gtext(row, colmap, "gender") || null,
@@ -1216,6 +1215,7 @@ const LIST_COLS = [
   ["patient_name", "患者"],
   ["phone", "电话"],
   ["physician", "医生"],
+  ["department", "科室"],
   ["product", "品种"],
   ["hospital", "医院"],
   ["pharmacy", "药房"],
@@ -1243,7 +1243,7 @@ const state = {
   weekSel: "this", // 周视图：last=上周 / this=本周 / next=下周（单选，默认本周）
   refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在自然周（周一~周日），可改以回看历史周
   stdCycle: {},   // 标准周期仅按「上传数据中出现品种」动态生成，不写死内置商品
-  plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示
+  plainName: false, plainPhone: false,  // false=脱敏显示（医生与姓名共用同一开关与方式）
   maskMode: "edge",   // 姓名/医生脱敏方式：first=保留首字、edge=保留首+末字、id=仅会员号、all=全部隐藏
   hiddenCols: new Set(),
   page: 1, pageSize: 50,
@@ -1310,7 +1310,8 @@ function maskPhone(v) {
   const d = String(v).replace(/\D/g, "");
   return d.length >= 7 ? d.slice(0, 3) + "****" + d.slice(-4) : String(v).replace(/\d/g, "*");
 }
-function maskDoctor(v) { return maskPersonName(v, state.maskMode === "id" ? "edge" : state.maskMode); }
+// 医生与姓名共用同一脱敏方式（保持一致）
+function maskDoctor(v) { return maskPersonName(v, state.maskMode); }
 // 按当前脱敏开关取展示值（mode=id「仅会员号」：患者列=会员号、医生列无会员身份显示 —）
 function disp(r, key) {
   const idOnly = state.maskMode === "id";
@@ -1320,8 +1321,9 @@ function disp(r, key) {
     return maskName(r.patient_name);
   }
   if (key === "phone") return state.plainPhone ? (r.phone || "") : maskPhone(r.phone);
+  // 医生与姓名保持同一脱敏开关与方式（不脱敏=跟随姓名明文；方式=姓名脱敏方式）
   if (key === "physician") {
-    if (state.plainDoctor) return r.physician || "";
+    if (state.plainName) return r.physician || "";
     if (idOnly) return "—";
     return maskDoctor(r.physician);
   }
@@ -1367,11 +1369,12 @@ function buildRows() {
     if (s.patient_name) p.name = s.patient_name;
     if (s.phone) p.phone = s.phone;
     const fam = s.product;
-    const bp = (p.byProduct[fam] = p.byProduct[fam] || { dates: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "", member_id: s.member_id || "" });
+    const bp = (p.byProduct[fam] = p.byProduct[fam] || { dates: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "", member_id: s.member_id || "", department: s.department || "" });
     bp.dates.push(s.sales_time);
     if (s.hospital) bp.hospital = s.hospital;
     if (s.pharmacy) bp.pharmacy = s.pharmacy;
     if (s.member_id) bp.member_id = s.member_id; // 会员号取最近购药记录的（脱敏方式「仅会员号」用）
+    if (s.department) bp.department = s.department; // 科室取最近购药记录的
     if (s.physician) bp.physician = s.physician;
   }
 
@@ -1480,6 +1483,7 @@ function buildRows() {
         patient_name: p.name, phone: p.phone, physician: bp.physician,
         hospital: bp.hospital, pharmacy: bp.pharmacy,
         member_id: bp.member_id || "", // 会员号（脱敏方式「仅会员号」时患者列显示）
+        department: bp.department || "", // 科室（销售底表「处方科室」）
         last_purchase: lastPurchase, cycle_days: cycle,
         // 应回已回行：due_date 显示「预判应购日」（不呈现下次应购时间）；无预判基准显示空（渲染为 —）
         due_date: rowDue,
@@ -1673,12 +1677,15 @@ function updateFilterInfo() {
   const plain = [];
   if (state.plainName) plain.push("姓名明文");
   if (state.plainPhone) plain.push("电话明文");
-  if (state.plainDoctor) plain.push("医生明文");
   if (plain.length) parts.push("展示:" + plain.join("/"));
   $("#filterInfo").textContent = parts.length ? ("筛选：" + parts.join(" · ")) : "";
 }
 
-const visibleCols = () => LIST_COLS.filter(([key]) => !state.hiddenCols.has(key));
+// 当前应展示列：用户隐藏列 之外；脱敏方式为「仅会员号」时强制隐藏电话列
+const visibleCols = () => LIST_COLS.filter(([key]) => {
+  if (state.maskMode === "id" && key === "phone") return false; // 仅会员号模式：不呈现电话列
+  return !state.hiddenCols.has(key);
+});
 
 function renderTable() {
   const cols = visibleCols();
@@ -1723,18 +1730,25 @@ function renderTable() {
       td.innerHTML = `<select class="reason-sel" data-key="${esc(key)}" data-cur="${esc(cur)}">
         <option value="">未标</option>${opts}</select>`;
       const sel = td.querySelector("select");
-      sel.focus();
-      let doneOnce = false;
-      const done = () => {
-        if (doneOnce) return;
-        doneOnce = true;
-        STORE.reasonOverrides[sel.dataset.key] = sel.value;
-        refresh(); // 保持当前页码与筛选；重渲染后恢复列表滚动位置，避免跳回顶端
-        const w2 = document.querySelector(".tbl-wrap");
-        if (w2) w2.scrollTop = scrollTop;
+      // 一步点选：点击即展开；change 即保存；点其它处或 Esc 取消（不保存）
+      // 不做 blur 关闭/保存——避免 focus/重排引发误关导致需多次点击
+      let closed = false;
+      const finish = (saveVal) => {
+        if (closed) return;
+        closed = true;
+        document.removeEventListener("mousedown", onDoc);
+        if (saveVal) STORE.reasonOverrides[sel.dataset.key] = sel.value;
+        refresh(); // 保持当前页码与筛选
+        // 渲染完成后恢复列表滚动位置，避免跳回顶端
+        setTimeout(() => { const w2 = document.querySelector(".tbl-wrap"); if (w2) w2.scrollTop = scrollTop; }, 0);
       };
-      sel.onchange = done;
-      sel.onblur = done;
+      const onDoc = (ev) => { if (!td.contains(ev.target)) finish(false); };
+      document.addEventListener("mousedown", onDoc);
+      sel.addEventListener("change", () => finish(true));
+      sel.addEventListener("keydown", ev => {
+        if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+      });
+      setTimeout(() => sel.focus(), 0); // 延后聚焦，避免点击事件未完成时 select 失焦
     });
   });
   tb.querySelectorAll("tr.data-row").forEach(tr => {
@@ -2414,8 +2428,11 @@ $("#colBtn").onclick = e => {
   const open = !p.classList.contains("hidden");
   closeAllPopovers();
   if (open) return;
-  p.innerHTML = LIST_COLS.map(([key, label]) =>
-    `<label><input type="checkbox" data-col="${key}" ${state.hiddenCols.has(key) ? "" : "checked"}> ${label}</label>`).join("");
+  p.innerHTML = LIST_COLS.map(([key, label]) => {
+    const phoneIdDisabled = state.maskMode === "id" && key === "phone";
+    const checked = !state.hiddenCols.has(key) && !phoneIdDisabled;
+    return `<label${phoneIdDisabled ? ' class="muted" title="脱敏方式为「仅会员号」时电话列自动隐藏"' : ""}><input type="checkbox" data-col="${key}" ${phoneIdDisabled ? "disabled " : ""}${checked ? "checked" : ""}> ${label}${phoneIdDisabled ? "（仅会员号隐藏）" : ""}</label>`;
+  }).join("");
   p.querySelectorAll("input").forEach(cb => cb.onchange = () => {
     if (cb.checked) state.hiddenCols.delete(cb.dataset.col); else state.hiddenCols.add(cb.dataset.col);
     renderTable();
@@ -2434,7 +2451,6 @@ function bindDesenToggle() {
     const plain = (mode === "plain");
     if (field === "name") state.plainName = plain;
     else if (field === "phone") state.plainPhone = plain;
-    else if (field === "doctor") state.plainDoctor = plain;
     b.parentElement.querySelectorAll(".dt-btn").forEach(x => x.classList.toggle("active", x === b));
     state.page = 1;
     refresh();
@@ -2442,7 +2458,7 @@ function bindDesenToggle() {
 }
 bindDesenToggle();
 function syncDesenBtns() {
-  const map = { name: state.plainName, phone: state.plainPhone, doctor: state.plainDoctor };
+  const map = { name: state.plainName, phone: state.plainPhone };
   document.querySelectorAll(".dt-btn").forEach(b => {
     const active = (b.dataset.mode === "plain") === !!map[b.dataset.field];
     b.classList.toggle("active", active);
@@ -2479,12 +2495,14 @@ const EXPORT_REPUR_STYLE = {
 async function doExport(desen) {
   const rows = DATA.rows;
   if (!rows.length) { alert("当前筛选无数据可导出"); return; }
-  const header = LIST_COLS.map(([, l]) => l).concat(["随访小结"]);
+  // 导出列 = 当前列表列（「仅会员号」时不含电话列，与展示一致）
+  const effCols = state.maskMode === "id" ? LIST_COLS.filter(([k]) => k !== "phone") : LIST_COLS;
+  const header = effCols.map(([, l]) => l).concat(["随访小结"]);
   // 列索引（用于着色）：状态=status、未购药原因=reason、距今天数=days_to_due、随访信号=fu_signal
-  const idxStatus = LIST_COLS.findIndex(([k]) => k === "status");
-  const idxReason = LIST_COLS.findIndex(([k]) => k === "reason");
-  const idxDays = LIST_COLS.findIndex(([k]) => k === "days_to_due");
-  const idxSig = LIST_COLS.findIndex(([k]) => k === "fu_signal");
+  const idxStatus = effCols.findIndex(([k]) => k === "status");
+  const idxReason = effCols.findIndex(([k]) => k === "reason");
+  const idxDays = effCols.findIndex(([k]) => k === "days_to_due");
+  const idxSig = effCols.findIndex(([k]) => k === "fu_signal");
   const EXPORT_SIG_FONT = { normal: "FF0F9D6B", nonstd: "FFE8590C", dropout: "FFE03131" };
 
   const wb = new ExcelJS.Workbook();
@@ -2499,7 +2517,7 @@ async function doExport(desen) {
   });
   // 数据行
   for (const r of rows) {
-    const vals = LIST_COLS.map(([k]) => {
+    const vals = effCols.map(([k]) => {
       if (k === "note") return STORE.notes[noteKey(r)] || "";
       // 应回购行仅导出细分（应回未回 / 应回已回，与列表显示一致）
       if (k === "status") return (r.status === "应回购" && r.repur_part) ? r.repur_part : r.status;
@@ -2595,7 +2613,7 @@ async function doSnapshot(desen) {
         cats: [...state.cats], reasons: [...state.reasons], repurParts: [...state.repurParts],
         products: [...state.products],
         hospitals: [...state.hospitals], pharmacies: [...state.pharmacies], executors: [...state.executors],
-        plainName: state.plainName, plainPhone: state.plainPhone, plainDoctor: state.plainDoctor, scopeNames: state.scopeNames,
+        plainName: state.plainName, plainPhone: state.plainPhone, scopeNames: state.scopeNames,
         maskMode: state.maskMode,
         hiddenCols: [...state.hiddenCols],
         periodType: state.periodType, periodStart: state.periodStart, periodEnd: state.periodEnd,
@@ -2669,7 +2687,7 @@ function loadSnapshot(snap) {
   state.hospitals = new Set(s.hospitals || []);
   state.pharmacies = new Set(s.pharmacies || []);
   state.executors = new Set(s.executors || []);
-  state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone; state.plainDoctor = !!s.plainDoctor;
+  state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone;
   state.maskMode = s.maskMode || "edge";
   state.scopeNames = s.scopeNames !== false;
   if (s.hiddenCols) state.hiddenCols = new Set(s.hiddenCols);
