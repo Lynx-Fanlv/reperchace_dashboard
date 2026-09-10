@@ -82,8 +82,8 @@ const state = {
   cats: new Set(), reasons: new Set(), repurParts: new Set(), products: new Set(), hospitals: new Set(), pharmacies: new Set(), executors: new Set(),
   q: "",
   weekSel: "this", // 周视图：last=上周 / this=本周 / next=下周（单选，默认本周）
-  refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在周（起止由 weekStart 决定），可改以回看历史周
-  weekStart: 1,    // 周起始日：0=周日 1=周一（自然周，默认）… 6=周六（即「上周六~本周五」）。前后周按同一规则平移
+  refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在周（起止由 weekEnd 决定），可改以回看历史周
+  weekEnd: 0,      // 周截止日：0=周日（自然周，周一~周日，默认）1=周一…6=周六（选周五即「上周六~本周五」）。前后周按同一规则平移
   stdCycle: {},   // 标准周期仅按「上传数据中出现品种」动态生成，不写死内置商品
   plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示（姓名/医生各自独立开关；脱敏掩码方式共用「姓名/医生脱敏方式」）
   maskMode: "edge",   // 姓名/医生脱敏方式：first=保留首字、edge=保留首+末字、id=仅会员号、all=全部隐藏
@@ -177,16 +177,17 @@ function noteKey(r) { return (r._key || "") + "::" + r.product; }
 /* ============ 周视图（状态判定的时间基准） ============ */
 // 参考日期：默认今天，可手动改（用于回看任意历史周的应购/购药情况）
 function refToday() { return state.refDate || todayStr(); }
-// 所选周范围：以参考日期所在「周」（起止由 state.weekStart 决定）为「本周」，前后推 上周/下周
-// weekStart：0=周日 1=周一（自然周）… 6=周六（如选周六，则本周=上周六~本周五）
+// 所选周范围：以参考日期所在「周」（起止由 state.weekEnd 决定）为「本周」，前后推 上周/下周
+// weekEnd = 周截止日：0=周日（自然周 周一~周日）… 6=周六（即 上周六~本周五）
+// 本周 = [截止日-6, 截止日]，其中截止日取「参考日当天或之后最近的该星期几」（保证参考日落在本周内）
 function getWeekRange(sel) {
   const base = refToday();
-  const startDow = (state.weekStart == null ? 1 : Number(state.weekStart)) % 7; // 0=周日
+  const endDow = (state.weekEnd == null ? 0 : Number(state.weekEnd)) % 7; // 0=周日
   const dow = new Date(base + "T00:00:00").getDay(); // 0=周日
-  let mon = addDays(base, -((dow - startDow + 7) % 7)); // 落在参考日当天或之前最近的「起始日」
-  if (sel === "last") mon = addDays(mon, -7);
-  else if (sel === "next") mon = addDays(mon, 7);
-  return { start: mon, end: addDays(mon, 6) };
+  let end = addDays(base, (endDow - dow + 7) % 7);   // 落在参考日当天或之后最近的「截止日」
+  if (sel === "last") end = addDays(end, -7);
+  else if (sel === "next") end = addDays(end, 7);
+  return { start: addDays(end, -6), end };
 }
 const WEEK_LABEL = { last: "上周", this: "本周", next: "下周" };
 const WEEKDAY_CN = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]; // 索引=Date.getDay()
@@ -732,7 +733,7 @@ function renderPagination(total) {
 
 /* ============ 整体小结（按品种分别总结；统计所选周，随周视图联动） ============ */
 // 计算某品种在「所选周」的小结统计（跟随 上周/本周/下周 视图，口径与周维度状态机完全一致）
-//   所选周 = 参考日期所在周（起止由「周起始日」决定，默认周一~周日）前后推
+//   所选周 = 参考日期所在周（起止由「周截止日」决定，默认周一~周日）前后推
 //   应回购（总集）= 应回未回（应购日∈所选周未购）+ 应回已回（所选周内购药，含提前购药者）
 //   未购药 = 应回未回；实际购药 = 应回已回
 //   下周预计 = 下次应购日 ∈ 所选周之后的下一周（7 天窗口）的患者，按随访信号分正常/推迟（脱落不计复购）
@@ -882,7 +883,7 @@ function renderSummaryPanel() {
   document.querySelectorAll("#summaryFamChips .chip").forEach(ch => {
     ch.onclick = () => { state.selFam = ch.dataset.fam; renderSummaryPanel(); };
   });
-  // 小结统计「所选周」（跟随 上周/本周/下周 视图；完整 7 天窗口，起止由「周起始日」决定，与状态机一致）
+  // 小结统计「所选周」（跟随 上周/本周/下周 视图；完整 7 天窗口，起止由「周截止日」决定，与状态机一致）
   // 统计范围跟随 医院/药房 筛选（多选=或）
   const W0 = getWeekRange(state.weekSel);
   const scope = [];
@@ -1191,8 +1192,8 @@ $("#clearBtn").onclick = () => {
   state.page = 1; refresh();
 };
 // 周视图：上周/本周/下周（单选）——所选周 = 状态判定的时间基准
-// 周起始日：可选「本周」的定义（周一=自然周 / 周六=上周六~本周五 / 周日=周日~周六 …），前后周按同一规则平移
-// 参考日期：默认今天；可手动改，以回看任意历史周的应购/购药情况（周范围随其与周起始日变化）
+// 周截止日：可选「本周」的定义（周五=上周六~本周五 / 周日=自然周 周一~周日 …），前后周按同一规则平移
+// 参考日期：默认今天；可手动改，以回看任意历史周的应购/购药情况（周范围随其与周截止日变化）
 function renderWeekBar() {
   document.querySelectorAll("#weekTabs .wk-btn").forEach(b => {
     b.classList.toggle("active", state.weekSel === b.dataset.wk);
@@ -1200,12 +1201,12 @@ function renderWeekBar() {
   });
   const W = getWeekRange(state.weekSel);
   const extra = state.refDate ? `（参考日 ${state.refDate}）` : "";
-  const startName = WEEKDAY_CN[new Date(W.start + "T00:00:00").getDay()];
-  $("#weekRangeLabel").textContent = `${WEEK_LABEL[state.weekSel]}：${W.start} ~ ${W.end}（${startName}起）${extra}`;
+  const endName = WEEKDAY_CN[new Date(W.end + "T00:00:00").getDay()];
+  $("#weekRangeLabel").textContent = `${WEEK_LABEL[state.weekSel]}：${W.start} ~ ${W.end}（${endName}止）${extra}`;
   $("#refDateInput").value = state.refDate || todayStr();
-  const wsEl = $("#weekStartInput");
+  const wsEl = $("#weekEndInput");
   if (wsEl) {
-    wsEl.value = String(state.weekStart == null ? 1 : state.weekStart);
+    wsEl.value = String(state.weekEnd == null ? 0 : state.weekEnd);
     wsEl.disabled = SNAP_MODE;
   }
 }
@@ -1221,12 +1222,12 @@ $("#refDateInput").onchange = e => {
   state.refDate = e.target.value || "";
   state.page = 1; refresh();
 };
-// 周起始日：「本周」的可选定义（自然周 / 上周六~本周五 / 周日~周六 …）
-const wsEl = $("#weekStartInput");
+// 周截止日：「本周」的可选定义（自然周 周一~周日 / 上周六~本周五 / …）
+const wsEl = $("#weekEndInput");
 if (wsEl) wsEl.onchange = e => {
   if (SNAP_MODE) return;
   const v = parseInt(e.target.value, 10);
-  state.weekStart = isNaN(v) ? 1 : v;
+  state.weekEnd = isNaN(v) ? 0 : v;
   state.page = 1; refresh();
 };
 // 标准周期维护（周期表未覆盖患者时使用）
@@ -1487,7 +1488,7 @@ async function doSnapshot(desen) {
     const snap = {
       desen, rows, notes: STORE.notes, reasonOverrides: STORE.reasonOverrides,
       summary: CURRENT.summary, state: {
-        weekSel: state.weekSel, refDate: state.refDate, weekStart: state.weekStart,
+        weekSel: state.weekSel, refDate: state.refDate, weekEnd: state.weekEnd,
         stdCycle: state.stdCycle, pageSize: state.pageSize,
         q: state.q,
         cats: [...state.cats], reasons: [...state.reasons], repurParts: [...state.repurParts],
@@ -1555,7 +1556,14 @@ function loadSnapshot(snap) {
   const s = snap.state || {};
   state.weekSel = s.weekSel || "this";
   state.refDate = s.refDate || "";
-  state.weekStart = (() => { const v = s.weekStart == null ? 1 : parseInt(s.weekStart, 10); return isNaN(v) ? 1 : ((v % 7) + 7) % 7; })();
+  // 周截止日（兼容旧快照的 weekStart：起始日 +6 天即为截止日）
+  state.weekEnd = (() => {
+    let v = s.weekEnd;
+    if (v == null && s.weekStart != null) v = parseInt(s.weekStart, 10) + 6;
+    if (v == null) return 0;
+    const n = parseInt(v, 10);
+    return isNaN(n) ? 0 : ((n % 7) + 7) % 7;
+  })();
   state.pageSize = s.pageSize || 50;
   state.page = 1;
   if (s.stdCycle) state.stdCycle = s.stdCycle;

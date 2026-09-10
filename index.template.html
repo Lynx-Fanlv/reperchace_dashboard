@@ -376,16 +376,16 @@
         <button class="wk-btn" data-wk="next" type="button">下周</button>
       </span>
       <span class="cfg-label" style="font-weight:400">参考日</span>
-      <input type="date" id="refDateInput" title="参考日期（默认今天）。「本周」= 该日期所在周（起止由右侧「周起始日」决定）；改为历史日期即可回看当时各状态的患者名单">
-      <span class="cfg-label">周起始日</span>
-      <select id="weekStartInput" title="定义「本周」的起止：选周一=自然周（周一~周日）；选周六=上周六~本周五；选周日=周日~周六。上周/下周按同一规则平移">
-        <option value="1">周一（自然周）</option>
+      <input type="date" id="refDateInput" title="参考日期（默认今天）。「本周」= 该日期所在周（起止由右侧「周截止日」决定）；改为历史日期即可回看当时各状态的患者名单">
+      <span class="cfg-label">周截止日</span>
+      <select id="weekEndInput" title="定义「本周」在哪一天结束：选周日=自然周（周一~周日）；选周五=上周六~本周五；选周六=周日~周六。上周/下周按同一规则平移">
+        <option value="1">周一</option>
         <option value="2">周二</option>
         <option value="3">周三</option>
         <option value="4">周四</option>
-        <option value="5">周五</option>
-        <option value="6">周六（上周六~本周五）</option>
-        <option value="0">周日（周日~周六）</option>
+        <option value="5">周五（上周六~本周五）</option>
+        <option value="6">周六（周日~周六）</option>
+        <option value="0">周日（自然周，周一~周日）</option>
       </select>
       <span class="cfg-label" id="weekRangeLabel" style="font-weight:400"></span>
       <span class="cfg-sep"></span>
