@@ -87,6 +87,10 @@
     border-radius:8px;background:#fff;color:var(--text)}
   .configbar input[type=date]:focus{outline:none;border-color:var(--brand)}
   .configbar input[type=date]:disabled{background:var(--gray-bg);color:var(--muted)}
+  .configbar select{font-size:13px;padding:5px 8px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
+  .configbar select:focus{outline:none;border-color:var(--brand)}
+  .configbar select:disabled{background:var(--gray-bg);color:var(--muted);cursor:default}
   /* 周视图选择（上周/本周/下周 单选） */
   .week-tabs{display:inline-flex;gap:4px}
   .week-tabs .wk-btn{padding:5px 14px;font-size:13px;border:1px solid var(--line);border-radius:8px;
@@ -372,7 +376,17 @@
         <button class="wk-btn" data-wk="next" type="button">下周</button>
       </span>
       <span class="cfg-label" style="font-weight:400">参考日</span>
-      <input type="date" id="refDateInput" title="参考日期（默认今天）。「本周」= 该日期所在自然周（周一~周日）；改为历史日期即可回看当时各状态的患者名单">
+      <input type="date" id="refDateInput" title="参考日期（默认今天）。「本周」= 该日期所在周（起止由右侧「周起始日」决定）；改为历史日期即可回看当时各状态的患者名单">
+      <span class="cfg-label">周起始日</span>
+      <select id="weekStartInput" title="定义「本周」的起止：选周一=自然周（周一~周日）；选周六=上周六~本周五；选周日=周日~周六。上周/下周按同一规则平移">
+        <option value="1">周一（自然周）</option>
+        <option value="2">周二</option>
+        <option value="3">周三</option>
+        <option value="4">周四</option>
+        <option value="5">周五</option>
+        <option value="6">周六（上周六~本周五）</option>
+        <option value="0">周日（周日~周六）</option>
+      </select>
       <span class="cfg-label" id="weekRangeLabel" style="font-weight:400"></span>
       <span class="cfg-sep"></span>
       <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改）</span>
