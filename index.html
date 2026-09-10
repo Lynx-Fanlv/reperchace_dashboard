@@ -426,8 +426,8 @@
       </div>
       <button class="btn ghost sm" id="clearBtn">重置筛选</button>
       <span class="fb-export">
-        <button class="export" id="exportDesenBtn">导出脱敏名单</button>
-        <button class="export" id="exportPlainBtn">导出未脱敏名单</button>
+        <button class="export" id="exportBtn" title="按当前脱敏开关导出（所见即所得）；三个开关都切「不脱敏」即得到全明文名单">导出名单</button>
+        <button class="export" id="exportCallbackBtn" title="导出本轮填写了跟进备注 / 点选了未购药原因的行，下次分析时连同其他表一起上传即可纳入分析（含明文姓名与电话）">导出随访回传表</button>
         <button class="export snap" id="snapshotDesenBtn">下载脱敏快照</button>
         <button class="export snap" id="snapshotPlainBtn">下载不脱敏快照</button>
       </span>
@@ -453,7 +453,7 @@
           <button class="dt-btn mm-btn" data-mm="id">仅会员号</button>
           <button class="dt-btn mm-btn" data-mm="all">全部隐藏</button></span>
       </span>
-      <span class="hint">三组开关相互独立；导出脱敏名单 / 脱敏快照与当前开关一致（未脱敏导出为全明文）</span>
+      <span class="hint">三组开关相互独立；「导出名单」按当前开关输出（所见即所得），「下载脱敏快照」同理</span>
       <span style="margin-left:auto"><button class="col-btn" id="colBtn">表头显隐 ▾</button></span>
     </div>
     <div class="col-panel hidden" id="colPanel"></div>
@@ -630,6 +630,11 @@ const KEYWORD_RULES = [
   ["executor",      ["执行人", "随访人", "经办人", "负责人", "坐席", "话务员", "客服"]],
   ["exec_time",     ["执行时间"]],
   ["cancel_reason", ["取消原因"]],
+  // 回传表专用：用户在看板里人工选定的未购药原因（写中文分类标签，导入后直接采用，等同人工点选）
+  ["reason_label",  ["未购药原因", "未购药原因分类"]],
+  // 回传表专用：用户在「跟进备注」列填写的内容。
+  // 单列独立映射，避免与「随访小结」一起被 MULTI 的 follow_note 合并成一列。
+  ["callback_note", ["跟进备注"]],
   // ---------- 患者用药周期表 ----------
   ["c_patient_name",["患者", "患者姓名", "姓名"]],
   ["cycle_days",    ["用药周期", "周期天数", "购药周期", "周期"]],
@@ -881,7 +886,7 @@ function mapColumns(tableType, rawCols) {
   const used = new Set();
   // 各表生效的字段前缀
   const FOLLOWUP_FIELDS = ["task_status", "summary_type", "executor", "follow_note", "cancel_reason",
-    "create_time", "plan_time", "exec_time", "task_no", "patient_id", "is_key"];
+    "create_time", "plan_time", "exec_time", "task_no", "patient_id", "is_key", "reason_label", "callback_note"];
   let prefix;
   if (tableType === "sales") prefix = f => !f.startsWith("f_") && !f.startsWith("c_");
   else if (tableType === "followup") prefix = f => f.startsWith("f_") || FOLLOWUP_FIELDS.includes(f);
@@ -1015,6 +1020,8 @@ function normalizeFollowup(row, colmap, sourceFile, sheetName, i) {
     executor: _gtext(row, colmap, "executor") || null,
     cancel_reason: _gtext(row, colmap, "cancel_reason") || null,
     follow_note: _gtext(row, colmap, "follow_note") || null,
+    reason_label: _gtext(row, colmap, "reason_label") || null, // 回传表专用：人工选定的未购药原因分类标签
+    callback_note: _gtext(row, colmap, "callback_note") || null, // 回传表专用：用户在「跟进备注」列填写的内容
     usage_status: multi("usage_status"),
     purchased_on_time: multi("purchased_on_time"),
     is_dropout: multi("is_dropout"),
@@ -2316,6 +2323,25 @@ $("#clearPendingBtn").onclick = () => {
 };
 
 // 开始分析：用当前列表全量解析；分析后保留列表与上传窗口，可增删后再次分析
+// 回传数据回流：识别回传表记录（服务摘要=「跟进回传」），把上一轮填写的内容接回本轮
+//  · 「跟进备注」列 → 回填 STORE.notes（该列仍可继续编辑）
+//  · 「未购药原因」标签 → 反查为分类 key 写入 STORE.reasonOverrides（等同人工点选，优先于自动判定）
+// 已有本轮编辑的字段不覆盖，避免刚填的内容被导入数据抹掉
+function applyCallbackRecords(followups) {
+  let nNote = 0, nReason = 0;
+  for (const fu of (followups || [])) {
+    if (String(fu.summary_type || "").trim() !== CB_SUMMARY_TYPE) continue;
+    const key = phoneDigits(fu.phone) || String(fu.patient_name || "").trim();
+    if (!key || !fu.product) continue;
+    const nk = key + "::" + fu.product;
+    const note = String(fu.callback_note || "").trim();
+    if (note && !String(STORE.notes[nk] || "").trim()) { STORE.notes[nk] = note; nNote++; }
+    const rk = reasonKeyFromLabel(fu.reason_label);
+    if (rk && !STORE.reasonOverrides[nk]) { STORE.reasonOverrides[nk] = rk; nReason++; }
+  }
+  return { nNote, nReason };
+}
+
 $("#startBtn").onclick = async () => {
   const unknown = pendingFiles.filter(p => p.kind === "unknown");
   if (unknown.length) {
@@ -2333,9 +2359,12 @@ $("#startBtn").onclick = async () => {
     STORE.sales = res.sales;
     STORE.followups = res.followups;
     STORE.cycles = res.cycles;
+    // 回传数据回流（上一轮导出的「随访回传表」在本轮自动接续）
+    const cb = applyCallbackRecords(res.followups);
     $("#board").classList.remove("hidden");
     $("#dataInfo").textContent =
-      `销售明细 ${res.sales.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人`;
+      `销售明细 ${res.sales.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人` +
+      (cb.nNote || cb.nReason ? ` · 已接续回传 ${cb.nNote} 条备注 / ${cb.nReason} 条原因` : "");
     // 按数据实际出现的品种动态维护标准周期（内置值优先，新品种默认 30 天）
     const products = [...new Set(res.sales.map(s => s.product).filter(Boolean))];
     ensureStdCycles(products);
@@ -2531,7 +2560,9 @@ const EXPORT_REPUR_STYLE = {
   "应回已回": { fill: "FFEAF3DE", font: "FF27500A" },
 };
 
-async function doExport(desen) {
+// 导出名单：内容与界面「所见即所得」——姓名/医生/电话按各自脱敏开关取值，
+// 三个开关都切「不脱敏」即得到全明文名单（原「导出未脱敏名单」的能力）
+async function doExport() {
   const rows = DATA.rows;
   if (!rows.length) { alert("当前筛选无数据可导出"); return; }
   // 导出列 = 当前列表列（「仅会员号」时不含电话列，与展示一致）
@@ -2567,18 +2598,18 @@ async function doExport(desen) {
         return "";
       }
       // 仅会员号模式（id）：患者列导出会员号、医生列空（与列表展示一致）
-      // 脱敏导出与界面三组开关保持一致：该字段开关为「不脱敏」时导出明文（与列表所见即所得）
+      // 与界面三组开关保持一致：该字段开关为「不脱敏」时导出明文（所见即所得）
       if (k === "patient_name") {
-        if (!desen || state.plainName) return r.patient_name || "";
+        if (state.plainName) return r.patient_name || "";
         if (state.maskMode === "id") return r.member_id || "";
         return maskName(r.patient_name);
       }
       if (k === "phone") {
-        if (!desen || state.plainPhone) return r.phone || "";
+        if (state.plainPhone) return r.phone || "";
         return maskPhone(r.phone);
       }
       if (k === "physician") {
-        if (!desen || state.plainDoctor) return r.physician || "";
+        if (state.plainDoctor) return r.physician || "";
         if (state.maskMode === "id") return "";
         return maskDoctor(r.physician);
       }
@@ -2622,28 +2653,96 @@ async function doExport(desen) {
   ws.views = [{ state: "frozen", ySplit: 1 }];
   const buf = await wb.xlsx.writeBuffer();
   download(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-    desen ? "预计购药名单_脱敏.xlsx" : "预计购药名单_未脱敏.xlsx");
+    "预计购药名单.xlsx");
 }
-$("#exportDesenBtn").onclick = () => {
-  // 「脱敏导出」会跟随界面三组开关；若存在「不脱敏」字段，导出物中会含明文，先提示
+// 导出名单（单一按钮）：按当前三组开关导出，所见即所得；含明文字段时先提示隐私风险
+$("#exportBtn").onclick = () => {
+  if (!DATA.rows.length) { alert("当前筛选无数据可导出"); return; }
   const plain = [];
   if (state.plainName) plain.push("姓名");
   if (state.plainDoctor) plain.push("医生");
   if (state.plainPhone) plain.push("电话");
   if (plain.length) {
     const ok = confirm(
-      "⚠️ 隐私风险提示\n\n当前「" + plain.join("、") + "」开关为「不脱敏」，\n本次脱敏导出中这些字段将输出明文。\n\n确定导出？"
+      "⚠️ 隐私风险提示\n\n当前「" + plain.join("、") + "」开关为「不脱敏」，\n本次导出将包含这些字段的明文。\n\n确定导出？"
     );
     if (!ok) return;
   }
-  doExport(true);
+  doExport();
 };
-$("#exportPlainBtn").onclick = () => {
-  const ok = confirm(
-    "⚠️ 隐私风险提示\n\n「未脱敏导出」包含明文姓名、电话、医生等个人敏感信息。\n仅可分享给可信的团队成员，切勿通过外部渠道转发。\n\n确定导出？"
+
+/* ============ 随访回传表导出（供下一轮作为随访数据回传） ============ */
+// 回传标记：识别签名用固定值，导入侧据此把数据回流到备注与未购药原因
+const CB_TASK_STATUS = "已完成";
+const CB_SUMMARY_TYPE = "跟进回传";
+// 回传表列（顺序即导出顺序）：既满足导入侧的类型识别签名（任务状态+服务摘要+联系电话），
+// 又能被逐字段映射回随访记录。强制明文，否则回传后无法匹配到患者。
+const CB_COLS = [
+  ["任务状态", () => CB_TASK_STATUS],
+  ["服务摘要", () => CB_SUMMARY_TYPE],
+  ["患者姓名", r => r.patient_name || ""],
+  ["联系电话", r => r.phone || ""],
+  ["产品", r => r.product || ""],
+  ["执行时间", () => refToday()],
+  ["执行人", r => r.executor || ""],
+  ["未购药原因", r => STORE.reasonOverrides[noteKey(r)] ? reasonLabel(state.reasonTree, STORE.reasonOverrides[noteKey(r)]) : ""],
+  ["跟进备注", r => STORE.notes[noteKey(r)] || ""],
+  ["随访小结", r => r.fu_note || ""],
+];
+
+// 原因标签 → 分类 key 反查（用于回传数据回流；path 优先，其次节点名）
+function reasonKeyFromLabel(label) {
+  const s = String(label == null ? "" : label).trim();
+  if (!s) return "";
+  const flat = flattenReasonTree(state.reasonTree);
+  const byPath = flat.find(x => x.path === s);
+  if (byPath) return byPath.key;
+  const byLabel = flat.find(x => x.label === s);
+  return byLabel ? byLabel.key : "";
+}
+
+function callbackRows() {
+  // 只回传真正有填写的行：填了跟进备注，或人工点选过未购药原因
+  return DATA.rows.filter(r => {
+    const k = noteKey(r);
+    return (STORE.notes[k] && String(STORE.notes[k]).trim()) || STORE.reasonOverrides[k];
+  });
+}
+
+async function doExportCallback() {
+  const rows = callbackRows();
+  if (!rows.length) {
+    alert("当前筛选内没有可回传的内容。\n\n请先在名单中填写「跟进备注」或点选「未购药原因」，再导出回传表。");
+    return;
+  }
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("随访回传");
+  const header = CB_COLS.map(([l]) => l);
+  const hRow = ws.addRow(header);
+  hRow.eachCell(c => {
+    c.font = { bold: true, color: { argb: "FF0C447C" } };
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6F1FB" } };
+    c.alignment = { vertical: "middle", horizontal: "center" };
+    c.border = { bottom: { style: "thin", color: { argb: "FFB5D4F4" } } };
+  });
+  for (const r of rows) ws.addRow(CB_COLS.map(([, get]) => get(r)));
+  // 列宽
+  const widths = [12, 12, 14, 16, 12, 14, 12, 20, 40, 40];
+  ws.columns.forEach((c, i) => { c.width = widths[i] || 14; });
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  const buf = await wb.xlsx.writeBuffer();
+  const d = refToday();
+  download(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    `随访回传_${d}.xlsx`);
+  alert(
+    `已导出 ${rows.length} 条跟进回传记录。\n\n` +
+    "下次分析时，把该文件与销售/随访/周期表一起上传即可：\n" +
+    "· 跟进备注会回填到「跟进备注」列（仍可编辑）\n" +
+    "· 未购药原因等同人工点选\n\n" +
+    "⚠️ 该表含明文姓名与电话，请仅在团队内部流转。"
   );
-  if (ok) doExport(false);
-};
+}
+$("#exportCallbackBtn").onclick = () => doExportCallback();
 
 /* ============ 快照生成（自包含 HTML） ============ */
 async function doSnapshot(desen) {
@@ -2770,7 +2869,7 @@ function loadSnapshot(snap) {
     ? "📄 这是一份脱敏快照：姓名、电话、医生已按所选方式脱敏，文件中不含任何明文个人信息，可安全分享。"
     : "⚠️ 这是一份「不脱敏」快照：包含明文姓名、电话、医生等个人信息，仅可分享给可信接收方。";
   const fb = document.querySelector(".filebar"); if (fb) fb.classList.add("hidden");
-  ["#exportDesenBtn", "#exportPlainBtn", "#snapshotDesenBtn", "#snapshotPlainBtn", "#clearAllBtn"].forEach(sl => $(sl).classList.add("hidden"));
+  ["#exportBtn", "#exportCallbackBtn", "#snapshotDesenBtn", "#snapshotPlainBtn", "#clearAllBtn"].forEach(sl => { const el = $(sl); if (el) el.classList.add("hidden"); });
   ["#refDateInput", "#clearBtn"].forEach(id => $(id).disabled = true);
   document.querySelectorAll("#cycleInputs .ci-num").forEach(inp => inp.disabled = true);
   document.querySelectorAll(".mm-btn").forEach(b => b.disabled = true);
@@ -2787,7 +2886,7 @@ function loadSnapshot(snap) {
   renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, disp, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
 })();
 
 </script>
