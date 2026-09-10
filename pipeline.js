@@ -52,7 +52,7 @@ function mapColumns(tableType, rawCols) {
   const used = new Set();
   // 各表生效的字段前缀
   const FOLLOWUP_FIELDS = ["task_status", "summary_type", "executor", "follow_note", "cancel_reason",
-    "create_time", "plan_time", "exec_time", "task_no", "patient_id", "is_key"];
+    "create_time", "plan_time", "exec_time", "task_no", "patient_id", "is_key", "reason_label", "callback_note"];
   let prefix;
   if (tableType === "sales") prefix = f => !f.startsWith("f_") && !f.startsWith("c_");
   else if (tableType === "followup") prefix = f => f.startsWith("f_") || FOLLOWUP_FIELDS.includes(f);
@@ -186,6 +186,8 @@ function normalizeFollowup(row, colmap, sourceFile, sheetName, i) {
     executor: _gtext(row, colmap, "executor") || null,
     cancel_reason: _gtext(row, colmap, "cancel_reason") || null,
     follow_note: _gtext(row, colmap, "follow_note") || null,
+    reason_label: _gtext(row, colmap, "reason_label") || null, // 回传表专用：人工选定的未购药原因分类标签
+    callback_note: _gtext(row, colmap, "callback_note") || null, // 回传表专用：用户在「跟进备注」列填写的内容
     usage_status: multi("usage_status"),
     purchased_on_time: multi("purchased_on_time"),
     is_dropout: multi("is_dropout"),

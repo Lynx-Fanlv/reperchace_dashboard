@@ -76,8 +76,8 @@ const row = { _key: '13800001111', product: '百泽安', patient_name: '张小�
   eq('仅电话不脱敏，姓名/医生仍脱敏', [App.disp(row, 'patient_name'), App.disp(row, 'physician'), App.disp(row, 'phone')].join(' | '), '张*三 | 李*夫 | 13800001111');
   S.plainPhone = false;
 
-  // ---- 3. doExport 脱敏导出是否跟随开关 ----
-  console.log('\n[3] doExport(脱敏) 跟随开关');
+  // ---- 3. doExport 是否跟随开关（合并为单一按钮后无参） ----
+  console.log('\n[3] 导出名单 跟随开关');
   App.DATA.rows = [row];
   const readback = async () => {
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(await captured.arrayBuffer());
@@ -87,25 +87,26 @@ const row = { _key: '13800001111', product: '百泽安', patient_name: '张小�
   };
 
   S.plainName = false; S.plainDoctor = true; S.plainPhone = false;
-  await App.doExport(true);
+  await App.doExport();
   let { v, i } = await readback();
-  eq('脱敏导出：姓名列仍脱敏', v[i.name + 1], '张*三');
-  eq('脱敏导出：医生列跟随「不脱敏」输出明文', v[i.doc + 1], '李大夫');
-  eq('脱敏导出：电话列仍脱敏', v[i.phone + 1], '138****1111');
+  eq('导出名单：姓名列仍脱敏', v[i.name + 1], '张*三');
+  eq('导出名单：医生列跟随「不脱敏」输出明文', v[i.doc + 1], '李大夫');
+  eq('导出名单：电话列仍脱敏', v[i.phone + 1], '138****1111');
 
   S.plainDoctor = false;
-  await App.doExport(true);
+  await App.doExport();
   ({ v, i } = await readback());
-  eq('脱敏导出：医生开关复位后回到脱敏', v[i.doc + 1], '李*夫');
+  eq('导出名单：医生开关复位后回到脱敏', v[i.doc + 1], '李*夫');
 
-  // ---- 4. 未脱敏导出：始终全明文（不跟随开关） ----
-  console.log('\n[4] doExport(未脱敏) 始终全明文');
-  S.plainName = false; S.plainDoctor = false; S.plainPhone = false;
-  await App.doExport(false);
+  // ---- 4. 三组开关全切「不脱敏」→ 导出全明文（原「未脱敏名单」能力） ----
+  console.log('\n[4] 三组开关全切「不脱敏」→ 全明文导出');
+  S.plainName = true; S.plainDoctor = true; S.plainPhone = true;
+  await App.doExport();
   ({ v, i } = await readback());
-  eq('未脱敏导出：姓名明文', v[i.name + 1], '张小三');
-  eq('未脱敏导出：医生明文', v[i.doc + 1], '李大夫');
-  eq('未脱敏导出：电话明文', v[i.phone + 1], '13800001111');
+  eq('全明文导出：姓名', v[i.name + 1], '张小三');
+  eq('全明文导出：医生', v[i.doc + 1], '李大夫');
+  eq('全明文导出：电话', v[i.phone + 1], '13800001111');
+  S.plainName = false; S.plainDoctor = false; S.plainPhone = false;
 
   // ---- 5. 「仅会员号」模式下医生开关仍生效 ----
   console.log('\n[5] maskMode=id（仅会员号）时医生开关独立生效');

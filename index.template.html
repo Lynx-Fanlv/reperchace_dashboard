@@ -426,8 +426,8 @@
       </div>
       <button class="btn ghost sm" id="clearBtn">重置筛选</button>
       <span class="fb-export">
-        <button class="export" id="exportDesenBtn">导出脱敏名单</button>
-        <button class="export" id="exportPlainBtn">导出未脱敏名单</button>
+        <button class="export" id="exportBtn" title="按当前脱敏开关导出（所见即所得）；三个开关都切「不脱敏」即得到全明文名单">导出名单</button>
+        <button class="export" id="exportCallbackBtn" title="导出本轮填写了跟进备注 / 点选了未购药原因的行，下次分析时连同其他表一起上传即可纳入分析（含明文姓名与电话）">导出随访回传表</button>
         <button class="export snap" id="snapshotDesenBtn">下载脱敏快照</button>
         <button class="export snap" id="snapshotPlainBtn">下载不脱敏快照</button>
       </span>
@@ -453,7 +453,7 @@
           <button class="dt-btn mm-btn" data-mm="id">仅会员号</button>
           <button class="dt-btn mm-btn" data-mm="all">全部隐藏</button></span>
       </span>
-      <span class="hint">三组开关相互独立；导出脱敏名单 / 脱敏快照与当前开关一致（未脱敏导出为全明文）</span>
+      <span class="hint">三组开关相互独立；「导出名单」按当前开关输出（所见即所得），「下载脱敏快照」同理</span>
       <span style="margin-left:auto"><button class="col-btn" id="colBtn">表头显隐 ▾</button></span>
     </div>
     <div class="col-panel hidden" id="colPanel"></div>
