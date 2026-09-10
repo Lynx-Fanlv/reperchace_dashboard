@@ -439,7 +439,7 @@
           <button class="dt-btn mm-btn" data-mm="id">仅会员号</button>
           <button class="dt-btn mm-btn" data-mm="all">全部隐藏</button></span>
       </span>
-      <span class="hint">展示层实时切换；导出脱敏名单 / 脱敏快照与所选方式保持一致</span>
+      <span class="hint">三组开关相互独立；导出脱敏名单 / 脱敏快照与当前开关一致（未脱敏导出为全明文）</span>
       <span style="margin-left:auto"><button class="col-btn" id="colBtn">表头显隐 ▾</button></span>
     </div>
     <div class="col-panel hidden" id="colPanel"></div>
@@ -1252,9 +1252,9 @@ function disp(r, key) {
     return maskName(r.patient_name);
   }
   if (key === "phone") return state.plainPhone ? (r.phone || "") : maskPhone(r.phone);
-  // 医生与姓名保持同一脱敏开关与方式（不脱敏=跟随姓名明文；方式=姓名脱敏方式）
+  // 医生：独立开关（state.plainDoctor）；脱敏时的方式与姓名共用（state.maskMode）
   if (key === "physician") {
-    if (state.plainName) return r.physician || "";
+    if (state.plainDoctor) return r.physician || "";
     if (idOnly) return "—";
     return maskDoctor(r.physician);
   }
@@ -2383,6 +2383,7 @@ function bindDesenToggle() {
     const plain = (mode === "plain");
     if (field === "name") state.plainName = plain;
     else if (field === "phone") state.plainPhone = plain;
+    else if (field === "doctor") state.plainDoctor = plain;
     b.parentElement.querySelectorAll(".dt-btn").forEach(x => x.classList.toggle("active", x === b));
     state.page = 1;
     refresh();
@@ -2460,14 +2461,18 @@ async function doExport(desen) {
         return "";
       }
       // 仅会员号模式（id）：患者列导出会员号、医生列空（与列表展示一致）
+      // 脱敏导出与界面三组开关保持一致：该字段开关为「不脱敏」时导出明文（与列表所见即所得）
       if (k === "patient_name") {
-        if (!desen) return r.patient_name || "";
+        if (!desen || state.plainName) return r.patient_name || "";
         if (state.maskMode === "id") return r.member_id || "";
         return maskName(r.patient_name);
       }
-      if (k === "phone") return desen ? maskPhone(r.phone) : (r.phone || "");
+      if (k === "phone") {
+        if (!desen || state.plainPhone) return r.phone || "";
+        return maskPhone(r.phone);
+      }
       if (k === "physician") {
-        if (!desen) return r.physician || "";
+        if (!desen || state.plainDoctor) return r.physician || "";
         if (state.maskMode === "id") return "";
         return maskDoctor(r.physician);
       }
@@ -2513,7 +2518,20 @@ async function doExport(desen) {
   download(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
     desen ? "预计购药名单_脱敏.xlsx" : "预计购药名单_未脱敏.xlsx");
 }
-$("#exportDesenBtn").onclick = () => doExport(true);
+$("#exportDesenBtn").onclick = () => {
+  // 「脱敏导出」会跟随界面三组开关；若存在「不脱敏」字段，导出物中会含明文，先提示
+  const plain = [];
+  if (state.plainName) plain.push("姓名");
+  if (state.plainDoctor) plain.push("医生");
+  if (state.plainPhone) plain.push("电话");
+  if (plain.length) {
+    const ok = confirm(
+      "⚠️ 隐私风险提示\n\n当前「" + plain.join("、") + "」开关为「不脱敏」，\n本次脱敏导出中这些字段将输出明文。\n\n确定导出？"
+    );
+    if (!ok) return;
+  }
+  doExport(true);
+};
 $("#exportPlainBtn").onclick = () => {
   const ok = confirm(
     "⚠️ 隐私风险提示\n\n「未脱敏导出」包含明文姓名、电话、医生等个人敏感信息。\n仅可分享给可信的团队成员，切勿通过外部渠道转发。\n\n确定导出？"
@@ -2530,9 +2548,10 @@ async function doSnapshot(desen) {
       const c = Object.assign({}, r);
       delete c._matched; delete c._row_id;
       if (desen) {
-        c.patient_name = maskName(c.patient_name);
-        c.phone = maskPhone(c.phone);
-        c.physician = maskDoctor(c.physician);
+        // 与界面三组开关保持一致：该字段开关为「不脱敏」时快照保留明文
+        if (!state.plainName) c.patient_name = maskName(c.patient_name);
+        if (!state.plainPhone) c.phone = maskPhone(c.phone);
+        if (!state.plainDoctor) c.physician = maskDoctor(c.physician);
       }
       return c;
     });
@@ -2654,7 +2673,7 @@ function loadSnapshot(snap) {
   renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, disp, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
 })();
 
 </script>
