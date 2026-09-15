@@ -93,7 +93,6 @@ const state = {
   periodType: "7d", periodStart: "", periodEnd: "",
   selFam: "",
   scopeNames: true, // 小结中是否呈现所选医院/药房名单（可开关）
-  rdShowAll: false, rdOpen: "", // 停药/减量根本原因分布：是否展开全部、当前展开明细的原因原值
   reasonTree: cloneReasonTree(DEFAULT_REASON_TREE), // 用户维护后的分类树（随快照保存）
   fuAdj: {},   // { [fam]: { [分类key]: n } } 小结人数人工修正（仅存用户改过的值；key=分类树叶子 key）
 };
@@ -836,113 +835,6 @@ function summaryScopeLine() {
   return "统计范围（" + [hs, ps].filter(Boolean).join("；") + "）";
 }
 
-/* ============ 停药 / 减量根本原因分布（跟随筛选区条件） ============ */
-// 取值来源：随访记录的三个原因字段，按「原值」分组计数（不做关键词归类）
-//  · 停药原因 stop_reason / 易脱落原因 dropout_reason  → 停药类
-//  · 推迟·延迟原因 delay_reason                        → 减量类
-// 只计数，不显示占比；同一患者若命中同一原因只计一次，命中多个不同原因则分别计入
-const RD_FIELDS = ["stop_reason", "delay_reason", "dropout_reason"];
-const RD_TOP = 12;         // 超过此条数才折叠「其他」
-const RD_DETAIL_MAX = 50;  // 明细最多列出的人数
-
-function rdNorm(v) { return String(v == null ? "" : v).replace(/\s+/g, " ").trim(); }
-
-// 按当前筛选结果统计各原因人数（返回按人数降序的原因列表 + 覆盖人数）
-function buildReasonDist() {
-  const byReason = new Map();  // 原值 -> Map(患者key -> 明细)
-  const patients = new Set();
-  for (const r of DATA.rows) {
-    const fu = r._matched;
-    if (!fu) continue;
-    const seen = new Set();
-    for (const f of RD_FIELDS) {
-      const v = rdNorm(fu[f]);
-      if (!v || seen.has(v)) continue;
-      seen.add(v);
-      if (!byReason.has(v)) byReason.set(v, new Map());
-      byReason.get(v).set(r._key, {
-        name: r.patient_name || "", phone: r.phone || "", member_id: r.member_id || "",
-        executor: r.executor || "", product: r.product || "",
-        fuTime: P.datePart(fu.exec_time) || P.datePart(fu.plan_time) || "",
-      });
-      patients.add(r._key);
-    }
-  }
-  const items = [...byReason.entries()]
-    .map(([label, m]) => ({ label, n: m.size, people: [...m.values()] }))
-    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label, "zh"));
-  const tail = items.slice(RD_TOP);
-  const tailPeople = new Set();
-  for (const it of tail) for (const p of it.people) tailPeople.add(p.name + "|" + p.phone);
-  return { patients: patients.size, items, head: items.slice(0, RD_TOP), tail,
-    tailCount: tail.length, tailPeople: tailPeople.size };
-}
-
-// 明细里的患者取值：与名单展示一致地跟随三组脱敏开关
-function rdPatName(p) {
-  if (state.plainName) return p.name || "";
-  if (state.maskMode === "id") return p.member_id || "—";
-  return maskName(p.name);
-}
-function rdPatPhone(p) { return state.plainPhone ? (p.phone || "") : maskPhone(p.phone); }
-
-function renderReasonDist() {
-  const panel = $("#reasonDistPanel");
-  if (!panel) return;
-  if (SNAP_MODE) { panel.classList.add("hidden"); return; }
-  const d = buildReasonDist();
-  if (!d.patients) { panel.classList.add("hidden"); return; }
-  panel.classList.remove("hidden");
-  const totalEntries = d.items.reduce((s, x) => s + x.n, 0);
-  $("#reasonDistScope").textContent = `跟随筛选区条件 · ${d.patients} 人 · 共 ${totalEntries} 条原因`;
-  const max = d.items.length ? d.items[0].n : 1;
-  const showAll = !!state.rdShowAll;
-  const rows = [];
-  const list = showAll ? d.items : d.head;
-  for (const it of list) {
-    const w = Math.max(2, Math.round(it.n / max * 100));
-    rows.push(
-      `<div class="rd-row" data-rd="${esc(it.label)}">` +
-      `<span class="rd-name" title="${esc(it.label)}">${esc(it.label)}</span>` +
-      `<span class="rd-track"><span class="rd-bar" style="width:${w}%"></span></span>` +
-      `<span class="rd-num">${it.n} 人</span></div>`
-    );
-    if (state.rdOpen === it.label) {
-      const ppl = it.people.slice(0, RD_DETAIL_MAX).map(p => {
-        const bits = [esc(rdPatName(p))];
-        const ph = rdPatPhone(p);
-        if (ph) bits.push(esc(ph));
-        if (p.executor) bits.push(esc(p.executor));
-        if (p.fuTime) bits.push(esc(p.fuTime));
-        return `<span>${bits.join(" · ")}</span>`;
-      }).join("<br>");
-      const more = it.people.length > RD_DETAIL_MAX
-        ? `<br><span class="rd-dp">…另有 ${it.people.length - RD_DETAIL_MAX} 人未列出</span>` : "";
-      rows.push(`<div class="rd-detail">${ppl}${more}</div>`);
-    }
-  }
-  if (!showAll && d.tailCount) {
-    rows.push(
-      `<div class="rd-row" data-rd-more="1">` +
-      `<span class="rd-name" style="color:var(--muted)">其他 ${d.tailCount} 项</span>` +
-      `<span class="rd-track" style="background:transparent"></span>` +
-      `<span class="rd-num">${d.tailPeople} 人</span></div>`
-    );
-  }
-  const box = $("#reasonDistList");
-  box.innerHTML = rows.join("");
-  box.querySelectorAll(".rd-row").forEach(el => {
-    el.onclick = () => {
-      if (el.dataset.rdMore) { state.rdShowAll = true; state.rdOpen = ""; }
-      else {
-        const k = el.dataset.rd;
-        state.rdOpen = (state.rdOpen === k) ? "" : k;
-      }
-      renderReasonDist();
-    };
-  });
-}
-
 // 生成小结文案（未购药原因按用户维护的分类树动态生成；父类人数=子类之和）
 function buildSummaryText(fam) {
   const st = buildSummaryStats(fam);
@@ -964,13 +856,6 @@ function buildSummaryText(fam) {
   lines.push(`3. 下周预计复购 ${nNormal + nPostpone} 人，预计正常回购 ${nNormal} 人，推迟 ${nPostpone} 人${pReasons}`);
   const scopeLine = summaryScopeLine();
   if (scopeLine) lines.push(scopeLine);
-  // 附一行纯文本版「停药/减量根本原因」（跟随筛选区条件；便于粘贴到日报/群消息）
-  const rd = buildReasonDist();
-  if (rd.patients) {
-    const seg = rd.items.slice(0, 8).map(x => `${x.label} ${x.n} 人`).join("、");
-    const more = rd.tailCount ? `，其他 ${rd.tailCount} 项 ${rd.tailPeople} 人` : "";
-    lines.push(`停药/减量根本原因（跟随筛选区条件，${rd.patients} 人）：${seg}${more}；`);
-  }
   SUMMARY.text = lines.join("\n");
   return { text: SUMMARY.text, st };
 }
@@ -1179,7 +1064,6 @@ async function refresh() {
   }));
   renderTable();
   renderSummaryPanel();
-  renderReasonDist();
   renderWeekBar();
 }
 
@@ -1819,5 +1703,5 @@ function loadSnapshot(snap) {
   renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, buildReasonDist, renderReasonDist, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
 })();
