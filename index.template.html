@@ -87,6 +87,28 @@
     border-radius:8px;background:#fff;color:var(--text)}
   .configbar input[type=date]:focus{outline:none;border-color:var(--brand)}
   .configbar input[type=date]:disabled{background:var(--gray-bg);color:var(--muted)}
+  /* 停药/减量根本原因分布（跟随筛选区条件；只计数，不显示占比） */
+  .rd-panel{margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .rd-panel.hidden{display:none}
+  .rd-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+  .rd-head b{font-size:14px;color:var(--text)}
+  .rd-sub{font-size:12px;color:var(--muted)}
+  .rd-tip{font-size:12px;color:var(--muted);margin-left:auto}
+  .rd-list{margin-top:8px}
+  .rd-row{display:flex;align-items:center;gap:10px;padding:3px 0}
+  .rd-row{cursor:pointer}
+  .rd-row:hover .rd-name{color:var(--brand)}
+  .rd-name{width:170px;flex:none;font-size:12px;color:var(--text);text-align:right;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rd-track{flex:1;min-width:0;height:14px;background:var(--gray-bg);border-radius:4px;overflow:hidden}
+  .rd-bar{display:block;height:100%;border-radius:4px;background:var(--warn)}
+  .rd-bar.rd-other{background:#b4b2a9}
+  .rd-num{width:52px;flex:none;font-size:12px;color:var(--muted);text-align:left}
+  .rd-empty{font-size:13px;color:var(--muted);padding:6px 0}
+  .rd-detail{margin:2px 0 8px 180px;padding:8px 10px;background:var(--bg);border-radius:8px;
+    font-size:12px;color:var(--text);line-height:1.7}
+  .rd-detail .rd-dp{color:var(--muted)}
+  .rd-more{font-size:12px;color:var(--brand);cursor:pointer;padding:4px 0 0 180px}
   .configbar select{font-size:13px;padding:5px 8px;border:1px solid var(--line);
     border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
   .configbar select:focus{outline:none;border-color:var(--brand)}
@@ -365,6 +387,16 @@
           <button class="btn ghost sm" id="reasonManagerReset">恢复默认</button>
         </div>
       </div>
+    </div>
+
+    <!-- 停药/减量根本原因分布（跟随筛选区条件；按随访「停药原因/推迟·延迟原因/易脱落原因」原值分组计数） -->
+    <div class="rd-panel hidden" id="reasonDistPanel">
+      <div class="rd-head">
+        <b>停药 / 减量根本原因</b>
+        <span class="rd-sub" id="reasonDistScope"></span>
+        <span class="rd-tip">按人数降序 · 点击一行可看该原因下的患者</span>
+      </div>
+      <div class="rd-list" id="reasonDistList"></div>
     </div>
 
     <!-- 判定配置：时间（周视图）+ 标准周期 -->
