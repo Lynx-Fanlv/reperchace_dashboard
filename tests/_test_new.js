@@ -71,25 +71,27 @@ App.state.stdCycle['百泽安'] = 14; // 改短周期
 const due14 = App.buildRows()[0].due_date;
 console.log(`  周期21天应购=${dueDefault} | 改14天后应购=${due14} ${due14 < dueDefault ? '✅ 周期配置生效' : '❌'}`);
 
-// ---------- ③ 时间窗筛选豁免已逾期 ----------
-console.log('\n===== ③ 时间窗筛选豁免已逾期 =====');
+// ---------- ③ 状态边界：已逾期 / 应回购（按「所选周」判定；原「时间窗筛选」已被周视图取代） ----------
+console.log('\n===== ③ 状态边界（周维度） =====');
 App.state.stdCycle = { "百泽安": 21, "百悦泽": 28 }; // 重置周期（避免 ② 的改动污染）
-// 构造：一条已逾期（40天前购药+21天=19天前应购）、一条应回购（15天前购药+21天=6天后应购）
-function daysAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+const W3 = App.getWeekRange('this');
+function shift(base, n){ const d = new Date(base + 'T00:00:00'); d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+// 相对所选周构造（不依赖"今天"是星期几）：应购日落在本周内 → 应回购；应购日早于本周首 → 已逾期
+const dueInWeek = shift(W3.start, 3);
+const dueBeforeWeek = shift(W3.start, -19);
 App.STORE.sales = [
-  { source:'sales', patient_name:'逾期甲', phone:'10000000001', sales_time: daysAgo(40), product:'百泽安', hospital:'H', pharmacy:'P', physician:'医' },
-  { source:'sales', patient_name:'应购乙', phone:'10000000002', sales_time: daysAgo(15), product:'百泽安', hospital:'H', pharmacy:'P', physician:'医' },
+  { source:'sales', patient_name:'逾期甲', phone:'10000000001', sales_time: shift(dueBeforeWeek, -21), product:'百泽安', hospital:'H', pharmacy:'P', physician:'医' },
+  { source:'sales', patient_name:'应购乙', phone:'10000000002', sales_time: shift(dueInWeek, -21), product:'百泽安', hospital:'H', pharmacy:'P', physician:'医' },
 ];
 App.STORE.followups = []; App.STORE.cycles = {};
 const all = App.buildRows();
 console.log('  全量:', all.map(r => r.patient_name + ':' + r.status).join(', '));
-// 选未来时间窗：今天 ~ 今天+30天
-App.state.start = daysAgo(0); App.state.end = (()=>{ const d=new Date(); d.setDate(d.getDate()+30); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
 const filtered = App.filterRows(all);
-console.log('  未来30天窗:', filtered.map(r => r.patient_name + ':' + r.status).join(', '));
-const hasOverdue = filtered.some(r => r.status === '已逾期');
-const hasDue = filtered.some(r => r.status === '应回购');
-console.log(`  已逾期保留=${hasOverdue}（期望true） 应回购保留=${hasDue}（期望true）`);
+console.log('  筛选后:', filtered.map(r => r.patient_name + ':' + r.status).join(', '));
+const hasOverdue = all.some(r => r.status === '已逾期');
+const hasDue = all.some(r => r.status === '应回购');
+console.log(`  已逾期判定=${hasOverdue}（期望true） 应回购判定=${hasDue}（期望true）`);
 okAll = okAll && hasOverdue && hasDue;
 console.log(okAll ? '\n✅ 三项新需求验证全部通过' : '\n❌ 存在失败项');
 if (!okAll) process.exit(1);

@@ -109,6 +109,12 @@
   .cycle-item .ci-num:focus{outline:none;border-color:var(--brand)}
   .cycle-item .ci-num:disabled{background:var(--gray-bg);color:var(--muted)}
   .cycle-item .ci-unit{font-size:12px;color:var(--muted)}
+  .cycle-item .ci-qty{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--muted);
+    cursor:pointer;padding-left:6px;border-left:1px solid var(--line);margin-left:2px}
+  .cycle-item .ci-qty input{cursor:pointer;margin:0}
+  .cycle-item .ci-qty.on{color:var(--brand);font-weight:600}
+  .cycle-item .ci-qty.disabled{cursor:default;opacity:.55}
+  .cycle-item:has(.ci-qty.on){border-color:var(--brand)}
   .filterbar{position:sticky;top:0;z-index:500;display:flex;flex-wrap:wrap;gap:10px;align-items:center;
     background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0 4px;
     box-shadow:0 1px 3px rgba(0,0,0,.03)}
@@ -389,7 +395,17 @@
       </select>
       <span class="cfg-label" id="weekRangeLabel" style="font-weight:400"></span>
       <span class="cfg-sep"></span>
-      <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改）</span>
+      <span class="cfg-label">周期算法</span>
+      <select id="cycleAlgoInput" title="「下次应购日」如何由「购药数量 × 用药周期」推进：重置式=每次购药都从本次重新起算（默认）；累计式=只要还有剩余库存就往后顺延；累计+容差=剩余库存超过容差天数才算囤药（顺延），否则从本次重新起算">
+        <option value="reset">重置式</option>
+        <option value="accum">累计式</option>
+        <option value="accum_tol">累计 + 容差</option>
+      </select>
+      <span class="cfg-label" style="font-weight:400" id="cycleTolLbl">容差</span>
+      <input type="number" id="cycleTolInput" min="0" max="365" value="7" title="仅「累计 + 容差」生效：剩余库存 ≤ 容差天数视为小幅提前购药，按本次重新起算">
+      <span class="cfg-label" style="font-weight:400" id="cycleTolSuffix">天</span>
+      <span class="cfg-sep"></span>
+      <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改；「按数量」= 该品种按「购药数量 × 周期」计算覆盖天数）</span>
       <span class="cycle-inputs" id="cycleInputs"></span>
     </div>
 
@@ -1244,6 +1260,7 @@ const LIST_COLS = [
   ["hospital", "医院"],
   ["pharmacy", "药房"],
   ["last_purchase", "最近购药"],
+  ["qty", "购药数量"],
   ["cycle_days", "周期(天)"],
   ["due_date", "应购药日期"],
   ["days_to_due", "距今天数"],
@@ -1268,6 +1285,9 @@ const state = {
   refDate: "",     // 参考日期（空=今天）；「本周」= 该日期所在周（起止由 weekEnd 决定），可改以回看历史周
   weekEnd: 0,      // 周截止日：0=周日（自然周，周一~周日，默认）1=周一…6=周六（选周五即「上周六~本周五」）。前后周按同一规则平移
   stdCycle: {},   // 标准周期仅按「上传数据中出现品种」动态生成，不写死内置商品
+  cycleAlgo: "reset", // 周期算法：reset=重置式（默认，最近一次购药 + 覆盖）/ accum=累计式 / accum_tol=累计+容差
+  cycleTol: 7,        // 容差天数（仅 accum_tol 生效）：剩余库存 ≤ 容差视为小幅提前，按重置处理
+  qtyScale: {},       // 每个品种是否「按数量计算」：true=覆盖天数=数量×周期（默认关闭，数量按 1 计）
   plainName: false, plainPhone: false, plainDoctor: false,  // false=脱敏显示（姓名/医生各自独立开关；脱敏掩码方式共用「姓名/医生脱敏方式」）
   maskMode: "edge",   // 姓名/医生脱敏方式：first=保留首字、edge=保留首+末字、id=仅会员号、all=全部隐藏
   hiddenCols: new Set(),
@@ -1375,9 +1395,59 @@ function getWeekRange(sel) {
 const WEEK_LABEL = { last: "上周", this: "本周", next: "下周" };
 const WEEKDAY_CN = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]; // 索引=Date.getDay()
 
+/* ============ 购药数量 × 用药周期 → 下次应购日 ============ */
+// 患者一次可购买多个周期的药品，故「本次购药覆盖天数 = 购药数量 × 单次用药周期」。
+// 数量是否参与计算按品种开关（state.qtyScale，默认关闭）；容差与算法见 state.cycleAlgo：
+//   reset     = 重置式：每次购药都从本次重新起算
+//   accum     = 累计式：只要还有剩余库存就往后顺延
+//   accum_tol = 累计 + 容差：剩余库存 > 容差N 视为囤药（顺延），≤ N 视为小幅提前（重置）
+// 「剩余库存 = 上次库存耗尽日 - 本次购药日」，故药已吃完才买时自动走重置分支。
+
+// 购药数量解析：取数字部分（容错 "2盒"/"1.5"/"1,200"），缺失、非数字或非正数按 1
+// （= 不放大，保持历史行为）。负数按 1，避免 "-2" 被正则截成 2。
+function qtyNum(v) {
+  if (v == null) return 1;
+  const m = String(v).replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+  if (!m) return 1;
+  const n = parseFloat(m[0]);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+// 该品种的数量是否参与计算（默认关闭 → 数量按 1 计，行为与历史一致）
+function qtyScales(fam) { return !!state.qtyScale[fam]; }
+// 单次购药的覆盖天数
+function coverDays(qty, cycle, fam) {
+  return (qtyScales(fam) ? qtyNum(qty) : 1) * cycle;
+}
+// 购药记录规整：按日期升序，同一天的多行数量相加（3 行各买 1 支 = 一次买了 3 支）
+function normalizePurchases(list) {
+  const out = [];
+  for (const p of (list || []).slice().sort((a, b) => a.date.localeCompare(b.date))) {
+    const last = out[out.length - 1];
+    if (last && last.date === p.date) last.qty += p.qty;
+    else out.push({ date: p.date, qty: p.qty });
+  }
+  return out;
+}
+// 按所选算法逐条推进「库存耗尽日」，返回最后一条购药的库存耗尽日（= 下次应购日）
+function stockEndAfter(purchases, cycle, fam) {
+  const algo = state.cycleAlgo || "reset";
+  const tol = Number.isFinite(Number(state.cycleTol)) ? Number(state.cycleTol) : 7;
+  let end = null;
+  for (const p of purchases) {
+    const cover = coverDays(p.qty, cycle, fam);
+    if (end == null) { end = addDays(p.date, cover); continue; }
+    let base;
+    if (algo === "reset") base = p.date;                              // 重置：本次重新起算
+    else if (algo === "accum") base = diffDays(p.date, end) > 0 ? p.date : end; // 累计：取较晚者（逾期自动重置）
+    else base = diffDays(end, p.date) <= tol ? p.date : end;          // 累计+容差
+    end = addDays(base, cover);
+  }
+  return end;
+}
+
 /* ============ 合并计算（核心） ============ */
-// 1) 按患者（电话/姓名）聚合销售记录 → 每患者每品种的购药时间序列
-// 2) 应购药日期 = 最近购药日 + 周期（周期表优先，否则标准周期）
+// 1) 按患者（电话/姓名）聚合销售记录 → 每患者每品种的购药时间序列（含购药数量）
+// 2) 应购药日期 = 按「周期算法」推进库存耗尽日（数量是否放大见「按数量计算」品种开关）
 // 3) 匹配随访：应购药日前最近一次（同品种优先；无则其他品种；再无则之后最早一条）
 // 4) 状态判定（周维度，购药事实优先）：
 //    当周有购药记录 → 应回购·应回已回（含提前购药）
@@ -1398,8 +1468,8 @@ function buildRows() {
     if (s.patient_name) p.name = s.patient_name;
     if (s.phone) p.phone = s.phone;
     const fam = s.product;
-    const bp = (p.byProduct[fam] = p.byProduct[fam] || { dates: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "", member_id: s.member_id || "", department: s.department || "" });
-    bp.dates.push(s.sales_time);
+    const bp = (p.byProduct[fam] = p.byProduct[fam] || { purchases: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "", member_id: s.member_id || "", department: s.department || "" });
+    bp.purchases.push({ date: s.sales_time, qty: qtyNum(s.qty) });
     if (s.hospital) bp.hospital = s.hospital;
     if (s.pharmacy) bp.pharmacy = s.pharmacy;
     if (s.member_id) bp.member_id = s.member_id; // 会员号取最近购药记录的（脱敏方式「仅会员号」用）
@@ -1431,23 +1501,24 @@ function buildRows() {
     const fus = fuIndex(p.name, p.phone);
     for (const fam in p.byProduct) {
       const bp = p.byProduct[fam];
-      if (!bp.dates.length) continue;
-      bp.dates.sort();
-      const lastPurchase = bp.dates[bp.dates.length - 1];
+      if (!bp.purchases.length) continue;
+      bp.purchases = normalizePurchases(bp.purchases);
+      const lastRec = bp.purchases[bp.purchases.length - 1];
+      const lastPurchase = lastRec.date;
       const cycle = cycles[p.name] || state.stdCycle[fam] || 30;
-      // 周视图状态判定基准：所选周 W（以参考日期所在自然周为「本周」）
+      // 周视图状态判定基准：所选周 W（起止由「周截止日」决定）
       //  当周 [W.start, W.end] 内有购药记录 → 应回购·应回已回（购药事实最优先）
       //  应购日 < W.start → 已逾期；应购日 ∈ W → 应回购；应购日 > W.end → 未到期
-      // 应购药日期列显示「预判应购日」= 倒数第二次购药日 + 周期（≥2条记录时），
+      // 应购药日期列显示「预判应购日」= 按周期算法推进到「倒数第二次购药」的库存耗尽日（≥2条记录时），
       // 用于对比实际购药是提前还是延后（应回已回行不呈现下次应购时间）
       const W = getWeekRange(state.weekSel);
-      const purchasedInWeek = bp.dates.some(d => d >= W.start && d <= W.end);
+      const purchasedInWeek = bp.purchases.some(x => x.date >= W.start && x.date <= W.end);
       let expectedDue = null, dueOffset = null;
-      if (bp.dates.length >= 2) {
-        expectedDue = addDays(bp.dates[bp.dates.length - 2], cycle);
+      if (bp.purchases.length >= 2) {
+        expectedDue = stockEndAfter(bp.purchases.slice(0, -1), cycle, fam);
         dueOffset = diffDays(lastPurchase, expectedDue); // 正=延期，负=提前，0=按时
       }
-      const dueDate = addDays(lastPurchase, cycle);
+      const dueDate = stockEndAfter(bp.purchases, cycle, fam);
 
       // 匹配随访：优先应购药日前最近一次（同品种；优先「已完成/有执行时间」的真实随访）
       let matched = null;
@@ -1513,7 +1584,7 @@ function buildRows() {
         hospital: bp.hospital, pharmacy: bp.pharmacy,
         member_id: bp.member_id || "", // 会员号（脱敏方式「仅会员号」时患者列显示）
         department: bp.department || "", // 科室（销售底表「处方科室」）
-        last_purchase: lastPurchase, cycle_days: cycle,
+        last_purchase: lastPurchase, qty: lastRec.qty, cycle_days: cycle,
         // 应回已回行：due_date 显示「预判应购日」（不呈现下次应购时间）；无预判基准显示空（渲染为 —）
         due_date: rowDue,
         due_in_week: dueInWeek, // 应购药日期落在所选周 → 优先展示并标底色
@@ -1934,7 +2005,7 @@ function buildSummaryStats(fam) {
     if (state.pharmacies.size && !state.pharmacies.has(s.pharmacy || "未知")) continue;
     const k = phoneDigits(s.phone) || s.patient_name || "";
     if (!k) continue;
-    (pat[k] = pat[k] || { name: s.patient_name || "", phone: s.phone || "", dates: [] }).dates.push(s.sales_time);
+    (pat[k] = pat[k] || { name: s.patient_name || "", phone: s.phone || "", purchases: [] }).purchases.push({ date: s.sales_time, qty: qtyNum(s.qty) });
   }
   const cycleOf = p => STORE.cycles[p.name || p.phone] || state.stdCycle[fam] || 30;
   const boughtKeys = new Set();     // 本周实际购药（当周有购药记录）
@@ -1943,10 +2014,11 @@ function buildSummaryStats(fam) {
   const nextKeys = [];              // 下周应购（下次应购日∈下周）
   for (const k in pat) {
     const p = pat[k];
-    p.dates.sort();
+    p.purchases = normalizePurchases(p.purchases);
     const cyc = cycleOf(p);
-    const nextDue = addDays(p.dates[p.dates.length - 1], cyc);
-    const boughtThisWeek = p.dates.some(d => inP(d, W.start, W.end));
+    // 与主状态机同一套口径：数量 × 周期 + 所选周期算法
+    const nextDue = stockEndAfter(p.purchases, cyc, fam);
+    const boughtThisWeek = p.purchases.some(x => inP(x.date, W.start, W.end));
     if (boughtThisWeek) boughtKeys.add(k);
     else if (inP(nextDue, W.start, W.end)) notBoughtKeys.push(k);
     else if (nextDue < W.start) overdueKeys.push(k);
@@ -2247,6 +2319,7 @@ async function refresh() {
   }));
   renderTable();
   renderSummaryPanel();
+  renderCycleCfg();
   renderWeekBar();
 }
 
@@ -2455,10 +2528,14 @@ function renderCycleInputs() {
     box.innerHTML = '<span class="hint">开始分析后按数据中的品种自动生成</span>';
     return;
   }
-  box.innerHTML = fams.map(fam =>
-    `<span class="cycle-item" data-fam="${esc(fam)}"><span class="ci-name">${esc(fam)}</span>` +
-    `<input type="number" class="ci-num" min="1" max="365" value="${state.stdCycle[fam]}">` +
-    `<span class="ci-unit">天</span></span>`).join("");
+  box.innerHTML = fams.map(fam => {
+    const on = !!state.qtyScale[fam];
+    return `<span class="cycle-item" data-fam="${esc(fam)}"><span class="ci-name">${esc(fam)}</span>` +
+      `<input type="number" class="ci-num" min="1" max="365" value="${state.stdCycle[fam]}">` +
+      `<span class="ci-unit">天</span>` +
+      `<label class="ci-qty${on ? " on" : ""}" title="勾选后：该品种的购药覆盖天数 = 购药数量 × 周期（患者一次买几个周期就按几个周期算）；不勾则数量按 1 计">` +
+      `<input type="checkbox" class="ci-qty-cb"${on ? " checked" : ""}>按数量</label></span>`;
+  }).join("");
   box.querySelectorAll(".ci-num").forEach(inp => {
     inp.addEventListener("change", () => {
       const item = inp.closest ? inp.closest(".cycle-item") : null;
@@ -2468,8 +2545,53 @@ function renderCycleInputs() {
       refresh();
     });
   });
+  box.querySelectorAll(".ci-qty-cb").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const label = cb.closest ? cb.closest(".ci-qty") : null;
+      const item = cb.closest ? cb.closest(".cycle-item") : null;
+      if (!item) return;
+      const fam = item.dataset.fam;
+      if (cb.checked) state.qtyScale[fam] = true; else delete state.qtyScale[fam];
+      if (label) label.classList.toggle("on", !!cb.checked);
+      refresh();
+    });
+  });
 }
 renderCycleInputs();
+
+// 周期算法选择器 + 容差天数（容差仅在「累计 + 容差」下可改）
+function renderCycleCfg() {
+  const algoEl = $("#cycleAlgoInput");
+  const algo = state.cycleAlgo || "reset";
+  if (algoEl) { algoEl.value = algo; algoEl.disabled = SNAP_MODE; }
+  const on = algo === "accum_tol";
+  const tolEl = $("#cycleTolInput");
+  if (tolEl) {
+    tolEl.value = String(state.cycleTol == null ? 7 : state.cycleTol);
+    tolEl.disabled = SNAP_MODE || !on;
+  }
+  ["#cycleTolLbl", "#cycleTolSuffix"].forEach(sel => {
+    const el = $(sel);
+    if (el) el.style.opacity = on ? "1" : ".45";
+  });
+}
+{
+  const algoEl = $("#cycleAlgoInput");
+  if (algoEl) algoEl.onchange = e => {
+    if (SNAP_MODE) return;
+    state.cycleAlgo = e.target.value || "reset";
+    renderCycleCfg();
+    state.page = 1; refresh();
+  };
+  const tolEl = $("#cycleTolInput");
+  if (tolEl) tolEl.onchange = e => {
+    if (SNAP_MODE) return;
+    const v = parseInt(e.target.value, 10);
+    state.cycleTol = (Number.isFinite(v) && v >= 0) ? v : 7;
+    renderCycleCfg();
+    state.page = 1; refresh();
+  };
+}
 let searchTimer = null;
 $("#searchInput").addEventListener("input", e => {
   clearTimeout(searchTimer);
@@ -2646,8 +2768,8 @@ async function doExport() {
       row.getCell(idxSig + 1).font = { color: { argb: EXPORT_SIG_FONT[r.fu_signal_kind] } };
     }
   }
-  // 列宽（17 个 LIST_COLS 列 + 随访小结）
-  const widths = [10, 14, 10, 10, 22, 18, 12, 10, 12, 10, 14, 18, 10, 10, 10, 24, 22, 40];
+  // 列宽（19 个 LIST_COLS 列 + 随访小结）
+  const widths = [10, 14, 10, 10, 22, 18, 12, 10, 10, 12, 10, 14, 18, 10, 10, 10, 24, 22, 40];
   ws.columns.forEach((c, i) => { c.width = widths[i] || 12; });
   // 冻结首行
   ws.views = [{ state: "frozen", ySplit: 1 }];
@@ -2765,6 +2887,7 @@ async function doSnapshot(desen) {
       summary: CURRENT.summary, state: {
         weekSel: state.weekSel, refDate: state.refDate, weekEnd: state.weekEnd,
         stdCycle: state.stdCycle, pageSize: state.pageSize,
+        cycleAlgo: state.cycleAlgo, cycleTol: state.cycleTol, qtyScale: state.qtyScale,
         q: state.q,
         cats: [...state.cats], reasons: [...state.reasons], repurParts: [...state.repurParts],
         products: [...state.products],
@@ -2842,6 +2965,9 @@ function loadSnapshot(snap) {
   state.pageSize = s.pageSize || 50;
   state.page = 1;
   if (s.stdCycle) state.stdCycle = s.stdCycle;
+  state.cycleAlgo = s.cycleAlgo || "reset";
+  state.cycleTol = (s.cycleTol == null || !Number.isFinite(Number(s.cycleTol))) ? 7 : Number(s.cycleTol);
+  state.qtyScale = s.qtyScale || {};
   renderCycleInputs();
   state.q = s.q || "";
   state.cats = new Set(s.cats || []);
@@ -2886,7 +3012,7 @@ function loadSnapshot(snap) {
   renderSummaryPanel();
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
 })();
 
 </script>

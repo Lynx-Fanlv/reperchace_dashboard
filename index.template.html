@@ -109,6 +109,12 @@
   .cycle-item .ci-num:focus{outline:none;border-color:var(--brand)}
   .cycle-item .ci-num:disabled{background:var(--gray-bg);color:var(--muted)}
   .cycle-item .ci-unit{font-size:12px;color:var(--muted)}
+  .cycle-item .ci-qty{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--muted);
+    cursor:pointer;padding-left:6px;border-left:1px solid var(--line);margin-left:2px}
+  .cycle-item .ci-qty input{cursor:pointer;margin:0}
+  .cycle-item .ci-qty.on{color:var(--brand);font-weight:600}
+  .cycle-item .ci-qty.disabled{cursor:default;opacity:.55}
+  .cycle-item:has(.ci-qty.on){border-color:var(--brand)}
   .filterbar{position:sticky;top:0;z-index:500;display:flex;flex-wrap:wrap;gap:10px;align-items:center;
     background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0 4px;
     box-shadow:0 1px 3px rgba(0,0,0,.03)}
@@ -389,7 +395,17 @@
       </select>
       <span class="cfg-label" id="weekRangeLabel" style="font-weight:400"></span>
       <span class="cfg-sep"></span>
-      <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改）</span>
+      <span class="cfg-label">周期算法</span>
+      <select id="cycleAlgoInput" title="「下次应购日」如何由「购药数量 × 用药周期」推进：重置式=每次购药都从本次重新起算（默认）；累计式=只要还有剩余库存就往后顺延；累计+容差=剩余库存超过容差天数才算囤药（顺延），否则从本次重新起算">
+        <option value="reset">重置式</option>
+        <option value="accum">累计式</option>
+        <option value="accum_tol">累计 + 容差</option>
+      </select>
+      <span class="cfg-label" style="font-weight:400" id="cycleTolLbl">容差</span>
+      <input type="number" id="cycleTolInput" min="0" max="365" value="7" title="仅「累计 + 容差」生效：剩余库存 ≤ 容差天数视为小幅提前购药，按本次重新起算">
+      <span class="cfg-label" style="font-weight:400" id="cycleTolSuffix">天</span>
+      <span class="cfg-sep"></span>
+      <span class="cfg-label">标准周期（周期表未覆盖患者时使用，按数据中的品种自动生成，可直接修改；「按数量」= 该品种按「购药数量 × 周期」计算覆盖天数）</span>
       <span class="cycle-inputs" id="cycleInputs"></span>
     </div>
 
