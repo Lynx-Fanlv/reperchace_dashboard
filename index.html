@@ -210,6 +210,7 @@
   .sub.due{color:var(--blue)}
   .sub.over{color:var(--bad);font-weight:600}
   .cell-clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:240px}
+  .ph-note{color:#e8590c;font-size:11px;margin-left:4px}
   /* 随访信号着色：正常=绿 / 可能延期=橙 / 脱落=红 / 未知=灰 */
   .fu-sig{font-weight:500}
   .fu-sig.normal{color:#0F9D6B}
@@ -1204,6 +1205,7 @@ const LIST_COLS = [
 const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, reasonOverrides: {} };
 let SNAP_MODE = false;
 let SNAP_BASE = null; // 快照全量行基准（不可变，供快照模式筛选；避免 DATA.rows 被覆盖后累积丢失）
+let GLOBAL_BY_PHARMACY = {}; // 药房多选面板计数：在该药房购过药的行数（基于全量明细，不受药房筛选影响）
 
 // 界面状态
 const state = {
@@ -1386,10 +1388,44 @@ function buildRows() {
   const followups = STORE.followups;
   const cycles = STORE.cycles;
 
-  // ---- 销售按患者聚合 ----
+  // ---- 药房筛选：从数据源头过滤销售明细 ----
+  // 语义：选中药房 = 只看该药房的购药记录。患者只要在该药房购过药就进入名单，
+  //      且「购药数量 / 最近购药 / 下次应购日 / 状态」全部只按该药房的记录计算。
+  //      与「整体小结」(buildSummaryStats 本就按药房过滤明细) 口径一致，
+  //      避免出现「小结算他一份、名单里却找不到人」的矛盾。
+  // 注：医院筛选不参与源头过滤，维持原「末次购药医院」语义。
+  const pharmSel = state.pharmacies;
+  const scoped = pharmSel.size ? sales.filter(s => pharmSel.has(s.pharmacy || "未知")) : sales;
+
+  // ---- 药房多选面板计数：在该药房有过购药记录的「患者×品种」行数 ----
+  // 基于全量明细统计，不受当前药房筛选影响（否则选中某药房后其余药房会从下拉里消失）；
+  // 同一患者同品种同药房的多行只计一次；跨药房患者会在多个药房各计一次（合计可大于总数）
+  {
+    const owner = {};
+    for (const s of sales) {
+      if (!s.sales_time || !s.product) continue;
+      owner[(s.pharmacy || "未知") + "\u0000" + (phoneDigits(s.phone) || s.patient_name || "未知") + "\u0000" + s.product] = s.pharmacy || "未知";
+    }
+    const cnt = {};
+    for (const key in owner) cnt[owner[key]] = (cnt[owner[key]] || 0) + 1;
+    GLOBAL_BY_PHARMACY = cnt;
+  }
+
+  // ---- 跨药房索引（仅药房筛选时构建）：判定「在本药房末次购药之后，患者已转到其他药房」----
+  const allRecs = {};
+  if (pharmSel.size) {
+    for (const s of sales) {
+      if (!s.sales_time || !s.product) continue;
+      const k = phoneDigits(s.phone) || (s.patient_name || "未知");
+      const fam = s.product;
+      ((allRecs[k] = allRecs[k] || {})[fam] = allRecs[k][fam] || []).push({ date: s.sales_time, pharmacy: s.pharmacy || "未知" });
+    }
+  }
+
+  // ---- 销售按患者聚合（基于已按药房过滤的记录）----
   const patMap = {}; // key: phoneDigits || name
   const keyOf = r => phoneDigits(r.phone) || (r.patient_name || "未知");
-  for (const s of sales) {
+  for (const s of scoped) {
     if (!s.sales_time || !s.product) continue;
     const k = keyOf(s);
     const p = (patMap[k] = patMap[k] || { name: s.patient_name || "未知", phone: s.phone || "", byProduct: {} });
@@ -1448,6 +1484,20 @@ function buildRows() {
       }
       const dueDate = stockEndAfter(bp.purchases, cycle, fam);
 
+      // ---- 跨药房提示（仅药房筛选时）----
+      // 本药房末次购药之后，患者在「选中集合之外」的药房还有更晚的购药记录
+      // → 对本药房而言该患者已转渠道，标注其末次实际购药药房与日期
+      let pharmacyNote = "";
+      if (pharmSel.size) {
+        const all = (allRecs[k] || {})[fam] || [];
+        let best = null;
+        for (const rec of all) {
+          if (pharmSel.has(rec.pharmacy)) continue;
+          if (rec.date > lastPurchase && (!best || rec.date > best.date)) best = rec;
+        }
+        if (best) pharmacyNote = "末次在 " + best.pharmacy + " " + best.date.slice(5);
+      }
+
       // 匹配随访：优先应购药日前最近一次（同品种；优先「已完成/有执行时间」的真实随访）
       let matched = null;
       if (fus.length) {
@@ -1490,6 +1540,9 @@ function buildRows() {
           if (treeKeys.includes(k)) autoReason = k;
         }
       }
+      // 跨药房事实兜底：随访文本判定不出原因时，用客观事实预填「转渠道」
+      // 优先级：人工点选 > 随访文本自动判定 > 跨药房事实
+      if (!autoReason && pharmacyNote && treeKeys.includes("channel")) autoReason = "channel";
       const reason = STORE.reasonOverrides[subKey] || autoReason; // 用户点选覆盖优先
       let category, repurPart = "";
       if (purchasedInWeek) {
@@ -1510,6 +1563,7 @@ function buildRows() {
         _key: k, product: fam,
         patient_name: p.name, phone: p.phone, physician: bp.physician,
         hospital: bp.hospital, pharmacy: bp.pharmacy,
+        pharmacy_note: pharmacyNote, // 跨药房提示（仅药房筛选时非空）：如「末次在 B 药房 07-20」
         member_id: bp.member_id || "", // 会员号（脱敏方式「仅会员号」时患者列显示）
         department: bp.department || "", // 科室（销售底表「处方科室」）
         last_purchase: lastPurchase, qty: lastRec.qty, cycle_days: cycle,
@@ -1840,6 +1894,13 @@ function rowHtml(r, idx, cols) {
       const clickable = SNAP_MODE ? "" : " clickable";
       const title = SNAP_MODE ? "" : "title=\"点击标注未购药原因\"";
       return `<td><span class="tag reason-tag${clickable}" data-key="${esc(noteKey(r))}" data-reason="${esc(r.reason || "")}" style="background:${color};cursor:${SNAP_MODE ? "default" : "pointer"}" ${title}>${esc(label)}</span></td>`;
+    }
+    if (key === "pharmacy") {
+      // 药房列：选中药房筛选时，若该患者已转到其他药房，附小字提示（完整语义见 title）
+      const base = esc(r.pharmacy || "");
+      if (!r.pharmacy_note) return `<td><div class="cell-clip">${base}</div></td>`;
+      const tip = (r.pharmacy || "") + "｜" + r.pharmacy_note + "（本药房末次购药后患者已转至其他药房购药）";
+      return `<td><div class="cell-clip" title="${esc(tip)}">${base}<span class="ph-note">${esc(r.pharmacy_note)}</span></div></td>`;
     }
     if (key === "product") return `<td><span class="tag-prod">${esc(disp(r, key))}</span></td>`;
     if (key === "note") {
@@ -2244,6 +2305,9 @@ async function refresh() {
   $("#summary").innerHTML = "";
   renderSummary(Object.assign({}, CURRENT.summary, {
     by_product: full.by_product, by_hospital: full.by_hospital, by_executor: full.by_executor,
+    // 药房计数采用「在该药房购过药的行数」（基于全量明细统计，不受当前药房筛选影响，
+    // 否则选中某药房后其余药房会从下拉里消失）；快照模式无明细，退回按快照行的末次药房计数
+    by_pharmacy: SNAP_MODE ? full.by_pharmacy : GLOBAL_BY_PHARMACY,
   }));
   renderTable();
   renderSummaryPanel();
@@ -2653,6 +2717,10 @@ async function doExport() {
         if (state.plainName) return r.patient_name || "";
         if (state.maskMode === "id") return r.member_id || "";
         return maskName(r.patient_name);
+      }
+      // 药房列：选中药房筛选时带上跨药房提示（与界面一致），便于在 Excel 里直接识别转渠道患者
+      if (k === "pharmacy") {
+        return (r.pharmacy || "") + (r.pharmacy_note ? "（" + r.pharmacy_note + "）" : "");
       }
       if (k === "phone") {
         if (state.plainPhone) return r.phone || "";
