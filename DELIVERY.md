@@ -548,6 +548,10 @@ for f in tests/_test_*.js; do node "$f" || echo "FAIL $f"; done
 
 ### 12.1 日常发布（有仓库写权限）
 
+> **接手方注意**：下面的命令以**原团队的仓库**为例（仅作流程示意）。
+> 请先把仓库地址、账号换成**你自己的**，否则命令会指向原团队仓库。
+> 顺带说明：这个交付包里没有 `.git`，也没配置任何远端，**所以你不主动添加远端就推送不到任何地方**。
+
 ```bash
 cd repurchase_dashboard
 python build.py && python build.py --single     # 1. 重建产物
