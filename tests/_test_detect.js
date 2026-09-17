@@ -1,6 +1,9 @@
 // 统一上传自动分类验证：detectFileType 对真实三张表的识别结果 + 速度
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// 样例 Excel 目录：默认取当前用户的 Downloads，可用环境变量 SAMPLE_DIR 覆盖
+const SAMPLE_DIR = process.env.SAMPLE_DIR || path.join(os.homedir(), 'Downloads');
 function makeEl(id) {
   return { id, innerHTML: '', textContent: '', value: '', disabled: false, style: {}, dataset: {},
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
@@ -30,9 +33,9 @@ function fileObj(p) {
 
 (async () => {
   const cases = [
-    ['C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx', 'sales'],
-    ['C:/Users/yym/Downloads/随访任务导出 (5).xlsx', 'followup'],
-    ['C:/Users/yym/Downloads/患者用药周期表.xlsx', 'cycle'],
+    [path.join(SAMPLE_DIR, '销售明细查询报表 (47).xlsx'), 'sales'],
+    [path.join(SAMPLE_DIR, '随访任务导出 (5).xlsx'), 'followup'],
+    [path.join(SAMPLE_DIR, '患者用药周期表.xlsx'), 'cycle'],
   ];
   const missing = cases.filter(([p]) => !fs.existsSync(p));
   if (missing.length) {

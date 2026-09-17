@@ -4,6 +4,9 @@
 // 修复：引入不可变基准 SNAP_BASE，快照模式筛选永远基于全量行。
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// 样例 Excel 目录：默认取当前用户的 Downloads，可用环境变量 SAMPLE_DIR 覆盖
+const SAMPLE_DIR = process.env.SAMPLE_DIR || path.join(os.homedir(), 'Downloads');
 const elStore = {};
 function makeEl(id) {
   return {
@@ -51,14 +54,14 @@ function assert(cond, msg) {
 (async () => {
   // 1. 用真实数据生成全量行，并构造混合状态快照（应回购/已逾期/未到期）
   const DATA_FILES = [
-    'C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx',
-    'C:/Users/yym/Downloads/随访任务导出 (5).xlsx',
-    'C:/Users/yym/Downloads/患者用药周期表.xlsx',
+    path.join(SAMPLE_DIR, '销售明细查询报表 (47).xlsx'),
+    path.join(SAMPLE_DIR, '随访任务导出 (5).xlsx'),
+    path.join(SAMPLE_DIR, '患者用药周期表.xlsx'),
   ];
   const missing = DATA_FILES.filter(p => !fs.existsSync(p));
   if (missing.length) {
-    console.log('⏭️ 跳过快照筛选回归：样例数据文件不在 Downloads（' +
-      missing.map(p => p.split('/').pop()).join('、') + ' 缺失）');
+    console.log('⏭️ 跳过快照筛选回归：样例数据文件不在 ' + SAMPLE_DIR + '（' +
+      missing.map(p => path.basename(p)).join('、') + ' 缺失）');
     process.exit(0);
   }
   function fileObj(p, name) {

@@ -1,6 +1,9 @@
 // 验证：销售明细(3) + 历史任务.xls → buildRows 后随访信号覆盖率
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// 样例 Excel 目录：默认取当前用户的 Downloads，可用环境变量 SAMPLE_DIR 覆盖
+const SAMPLE_DIR = process.env.SAMPLE_DIR || path.join(os.homedir(), 'Downloads');
 const elStore = {};
 function makeEl(id) {
   return { id, _html: '', textContent: '', value: '', disabled: false, style: {}, dataset: {}, scrollTop: 0,
@@ -31,11 +34,11 @@ const P = global.Pipeline, App = global.AppCore;
       async arrayBuffer(){ return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength); } };
   }
   const files = [
-    fileObj('C:/Users/yym/Downloads/销售明细查询报表 (3).xlsx', '销售.xlsx'),
-    fileObj('C:/Users/yym/Downloads/历史任务.xls', '历史任务.xls'),
+    fileObj(path.join(SAMPLE_DIR, '销售明细查询报表 (3).xlsx'), '销售.xlsx'),
+    fileObj(path.join(SAMPLE_DIR, '历史任务.xls'), '历史任务.xls'),
   ];
   // 周期表若存在则带上
-  const cycPath = 'C:/Users/yym/Downloads/患者用药周期表.xlsx';
+  const cycPath = path.join(SAMPLE_DIR, '患者用药周期表.xlsx');
   if (fs.existsSync(cycPath)) files.push(fileObj(cycPath, '周期.xlsx'));
 
   const res = await P.processFiles(files);

@@ -1,6 +1,9 @@
 // 诊断：新数据文件（销售明细3 + 历史任务.xls）的表头结构与列映射命中情况
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// 样例 Excel 目录：默认取当前用户的 Downloads，可用环境变量 SAMPLE_DIR 覆盖
+const SAMPLE_DIR = process.env.SAMPLE_DIR || path.join(os.homedir(), 'Downloads');
 const ROOT = path.join(__dirname, '..');
 global.window = global;
 global.XLSX = require(path.join(ROOT, 'vendor', 'xlsx.full.min.js'));
@@ -33,8 +36,8 @@ function fileObj(p) {
 }
 
 (async () => {
-  const salesPath = 'C:/Users/yym/Downloads/销售明细查询报表 (3).xlsx';
-  const fuPath = 'C:/Users/yym/Downloads/历史任务.xls';
+  const salesPath = path.join(SAMPLE_DIR, '销售明细查询报表 (3).xlsx');
+  const fuPath = path.join(SAMPLE_DIR, '历史任务.xls');
 
   // 1. 表头结构
   dumpSheet(salesPath, '销售明细查询报表 (3).xlsx');

@@ -1,6 +1,9 @@
 // 动态品种标准周期测试：标准周期只显示/允许填写「上传数据中出现品种」，不写死内置商品
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// 样例 Excel 目录：默认取当前用户的 Downloads，可用环境变量 SAMPLE_DIR 覆盖
+const SAMPLE_DIR = process.env.SAMPLE_DIR || path.join(os.homedir(), 'Downloads');
 const elStore = {};
 function makeEl(id) {
   return {
@@ -95,9 +98,9 @@ function assert(cond, msg) {
   // ---------- ⑥ 真实数据：只显示实际出现品种 ----------
   console.log('\n===== ⑥ 真实数据实际品种 =====');
   const realPaths = [
-    'C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx',
-    'C:/Users/yym/Downloads/随访任务导出 (5).xlsx',
-    'C:/Users/yym/Downloads/患者用药周期表.xlsx',
+    path.join(SAMPLE_DIR, '销售明细查询报表 (47).xlsx'),
+    path.join(SAMPLE_DIR, '随访任务导出 (5).xlsx'),
+    path.join(SAMPLE_DIR, '患者用药周期表.xlsx'),
   ];
   if (!realPaths.every(p => fs.existsSync(p))) {
     console.log('  ⏭️ 跳过：样例数据文件不在 Downloads 目录（非代码问题）');

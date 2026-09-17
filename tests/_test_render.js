@@ -1,6 +1,9 @@
 // 渲染层 smoke 测试：加载真实数据 → 模拟「开始分析」→ renderSummary/renderTable 不抛异常
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// 样例 Excel 目录：默认取当前用户的 Downloads，可用环境变量 SAMPLE_DIR 覆盖
+const SAMPLE_DIR = process.env.SAMPLE_DIR || path.join(os.homedir(), 'Downloads');
 const elStore = {};
 function makeEl(id) {
   return {
@@ -38,14 +41,14 @@ const P = global.Pipeline, App = global.AppCore;
 
 (async () => {
   const DATA_FILES = [
-    'C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx',
-    'C:/Users/yym/Downloads/随访任务导出 (5).xlsx',
-    'C:/Users/yym/Downloads/患者用药周期表.xlsx',
+    path.join(SAMPLE_DIR, '销售明细查询报表 (47).xlsx'),
+    path.join(SAMPLE_DIR, '随访任务导出 (5).xlsx'),
+    path.join(SAMPLE_DIR, '患者用药周期表.xlsx'),
   ];
   const missing = DATA_FILES.filter(p => !fs.existsSync(p));
   if (missing.length) {
-    console.log('⏭️ 跳过渲染 smoke：样例数据文件不在 Downloads（' +
-      missing.map(p => p.split('/').pop()).join('、') + ' 缺失）');
+    console.log('⏭️ 跳过渲染 smoke：样例数据文件不在 ' + SAMPLE_DIR + '（' +
+      missing.map(p => path.basename(p)).join('、') + ' 缺失）');
     process.exit(0);
   }
   function fileObj(p, name) {

@@ -2,6 +2,9 @@
 // 用 DOM stub 让 app.js 可加载，直接调用 AppCore.buildRows/filterRows/buildSummary。
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// 样例 Excel 目录：默认取当前用户的 Downloads，可用环境变量 SAMPLE_DIR 覆盖
+const SAMPLE_DIR = process.env.SAMPLE_DIR || path.join(os.homedir(), 'Downloads');
 
 // ---------- 最小 DOM stub ----------
 function makeEl(id) {
@@ -53,14 +56,14 @@ function fileObj(p, name) {
 
 async function main() {
   const DATA_FILES = [
-    'C:/Users/yym/Downloads/销售明细查询报表 (47).xlsx',
-    'C:/Users/yym/Downloads/随访任务导出 (5).xlsx',
-    'C:/Users/yym/Downloads/患者用药周期表.xlsx',
+    path.join(SAMPLE_DIR, '销售明细查询报表 (47).xlsx'),
+    path.join(SAMPLE_DIR, '随访任务导出 (5).xlsx'),
+    path.join(SAMPLE_DIR, '患者用药周期表.xlsx'),
   ];
   const missing = DATA_FILES.filter(p => !fs.existsSync(p));
   if (missing.length) {
-    console.log('⏭️ 跳过端到端验证：样例数据文件不在 Downloads（' +
-      missing.map(p => p.split('/').pop()).join('、') + ' 缺失）');
+    console.log('⏭️ 跳过端到端验证：样例数据文件不在 ' + SAMPLE_DIR + '（' +
+      missing.map(p => path.basename(p)).join('、') + ' 缺失）');
     process.exit(0);
   }
   const files = DATA_FILES.map(p => fileObj(p));
