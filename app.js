@@ -304,13 +304,15 @@ function buildRows() {
     if (s.patient_name) p.name = s.patient_name;
     if (s.phone) p.phone = s.phone;
     const fam = s.product;
-    const bp = (p.byProduct[fam] = p.byProduct[fam] || { purchases: [], hospital: s.hospital || "", pharmacy: s.pharmacy || "", physician: s.physician || "", member_id: s.member_id || "", department: s.department || "" });
+    const bp = (p.byProduct[fam] = p.byProduct[fam] || { purchases: [], _infoDate: {}, hospital: "", pharmacy: "", physician: "", member_id: "", department: "" });
     bp.purchases.push({ date: s.sales_time, qty: qtyNum(s.qty) });
-    if (s.hospital) bp.hospital = s.hospital;
-    if (s.pharmacy) bp.pharmacy = s.pharmacy;
-    if (s.member_id) bp.member_id = s.member_id; // 会员号取最近购药记录的（脱敏方式「仅会员号」用）
-    if (s.department) bp.department = s.department; // 科室取最近购药记录的
-    if (s.physician) bp.physician = s.physician;
+    // ---- 归属信息（医院/药房/科室/医生/会员号）取「销售时间最近一次的非空值」----
+    // 不能取销售明细里的最后一行：销售明细报表常按销售时间【降序】导出，
+    // 末行反而是患者最早那次购药，会导致这三个字段与「最近购药」错位。
+    // 逐字段按日期比较（某字段在新记录里为空时，沿用该字段更早的非空值）。
+    for (const f of ["hospital", "pharmacy", "member_id", "department", "physician"]) {
+      if (s[f] && s.sales_time >= (bp._infoDate[f] || "")) { bp[f] = s[f]; bp._infoDate[f] = s.sales_time; }
+    }
   }
 
   // ---- 随访按患者索引 ----
