@@ -280,6 +280,31 @@
   /* 分类维护面板 */
   .reason-manager{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px}
   .reason-manager.hidden{display:none}
+  /* 分类维护面板随小结换位到兄弟层：默认隐藏，仅在主程序点「管理分类」时显示 */
+  #reasonManager{margin:8px 0 4px}
+  /* 快照品种选择弹窗（doSnapshot 前确认快照包含哪些品种） */
+  .fam-pick-mask{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2000;display:flex;
+    align-items:center;justify-content:center;padding:20px}
+  .fam-pick-box{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;
+    padding:16px 18px;width:min(460px,100%);max-height:80vh;display:flex;flex-direction:column;
+    box-shadow:0 12px 40px rgba(15,23,42,.22)}
+  .fp-head{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  .fp-head b{font-size:15px}
+  .fp-hint{font-size:12px;color:var(--muted);line-height:1.5}
+  .fp-list{border:1px solid var(--line);border-radius:10px;overflow:auto;min-height:80px;max-height:46vh}
+  .fp-item{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--line);
+    cursor:pointer;font-size:13px}
+  .fp-item:last-child{border-bottom:none}
+  .fp-item:hover{background:rgba(47,107,214,.05)}
+  .fp-item input{width:15px;height:15px;cursor:pointer}
+  .fp-item .fp-name{flex:1;font-weight:600}
+  .fp-item .fp-cnt{color:var(--muted);font-size:12px}
+  .fp-foot{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .fp-tools{display:flex;gap:10px}
+  .fp-tools a{color:var(--brand);cursor:pointer;font-size:12px;font-weight:600}
+  .fp-num{font-size:12px;color:var(--muted);margin-left:auto}
+  .fp-btns{display:flex;gap:8px}
+  .fp-btns button[disabled]{opacity:.5;cursor:not-allowed}
   .rm-head{font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
   .rm-hint{font-size:12px;font-weight:400;color:var(--muted);margin-left:8px}
   .rm-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
@@ -343,6 +368,7 @@
     </div>
 
     <!-- 整体小结（按品种分别总结，固定统计「本周」；未购药原因=患者明细标注汇总，分类可维护） -->
+    <!-- 注意：快照导出时整块 #summaryPanel 会被移除（见 app.js doSnapshot），因为快照内无法按筛选重算小结，留着易生误会 -->
     <div class="summary-panel hidden" id="summaryPanel">
       <div class="sp-head">
         <b>整体小结</b>
@@ -363,14 +389,16 @@
       </div>
       <pre class="sp-text" id="summaryText"></pre>
       <div class="sp-adjust hidden" id="summaryAdjust"></div>
-      <!-- 分类维护面板（未购药原因分类树：增删改/加子类/恢复默认；原因列选项与小结文案跟随） -->
-      <div class="reason-manager hidden" id="reasonManager">
-        <div class="rm-head">未购药原因分类维护<span class="rm-hint">修改后「未购药原因」列选项与小结文案同步更新</span></div>
-        <div class="rm-list" id="reasonManagerList"></div>
-        <div class="rm-foot">
-          <button class="btn ghost sm" id="reasonManagerAdd">+ 新增分类</button>
-          <button class="btn ghost sm" id="reasonManagerReset">恢复默认</button>
-        </div>
+    </div>
+    <!-- 分类维护面板（未购药原因分类树：增删改/加子类/恢复默认；原因列选项与小结文案跟随）
+         注意：留在 #summaryPanel 之外，避免随小结一起被移除——原因分类树必须随快照保存，
+         否则快照里「未购药原因」列只能显示 key 而非中文标签。 -->
+    <div class="reason-manager hidden" id="reasonManager">
+      <div class="rm-head">未购药原因分类维护<span class="rm-hint">修改后「未购药原因」列选项与小结文案同步更新</span></div>
+      <div class="rm-list" id="reasonManagerList"></div>
+      <div class="rm-foot">
+        <button class="btn ghost sm" id="reasonManagerAdd">+ 新增分类</button>
+        <button class="btn ghost sm" id="reasonManagerReset">恢复默认</button>
       </div>
     </div>
 
@@ -445,13 +473,13 @@
       <span class="fb-export">
         <button class="export" id="exportBtn" title="按当前脱敏开关导出（所见即所得）；三个开关都切「不脱敏」即得到全明文名单">导出名单</button>
         <button class="export" id="exportCallbackBtn" title="导出本轮填写了跟进备注 / 点选了未购药原因的行，下次分析时连同其他表一起上传即可纳入分析（含明文姓名与电话）">导出随访回传表</button>
-        <button class="export snap" id="snapshotDesenBtn">下载脱敏快照</button>
-        <button class="export snap" id="snapshotPlainBtn">下载不脱敏快照</button>
+        <button class="export snap" id="snapshotDesenBtn" title="快照只含当前筛选出的品种；点击后可改选要包含的品种">下载脱敏快照</button>
+        <button class="export snap" id="snapshotPlainBtn" title="快照只含当前筛选出的品种；点击后可改选要包含的品种">下载不脱敏快照</button>
       </span>
     </div>
 
-    <!-- 脱敏切换 + 列显隐 -->
-    <div class="filterbar" style="margin-top:6px">
+    <!-- 脱敏切换 + 列显隐（快照模式整条隐藏，见 app.js loadSnapshot：快照沿用生成时的脱敏状态） -->
+    <div class="filterbar" id="desenBar" style="margin-top:6px">
       <span class="desen-tog">
         <span class="dt-grp"><span class="dt-lbl">姓名</span>
           <button class="dt-btn active" data-field="name" data-mode="mask">脱敏</button>
