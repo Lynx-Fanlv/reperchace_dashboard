@@ -192,6 +192,88 @@ function resetState() {
     !['随访医院F', '随访科室F', '随访医生F'].includes(rows[0].department) &&
     !['随访医院F', '随访科室F', '随访医生F'].includes(rows[0].physician));
 
+  // ---------------------------------------------------------------
+  console.log('\n[7] 医院列 = 只认「医疗单位」（首诊医院/就诊医院/医院 都不认）');
+  // 通过真实 XLSX 走 mapColumns，验证列标题映射（而非手工造对象）。
+  // 每个列名配一个【同名标记值】，这样能精确判断到底取了哪一列。
+  function mkHeader(extraCols) {
+    const base = ['销售时间', '会员姓名', '会员电话', '商品名称', '销售数量'];
+    const names = [...base, ...extraCols, '药房名称', '处方医生', '处方科室'];
+    const vals = ['2026-08-01', '小试', '13900000009', '百泽安', '1',
+      ...extraCols.map(c => '值<' + c + '>'), '药房V', '医生V', '科室V'];
+    return { names, vals };
+  }
+  async function mapSalesHeader(extraCols) {
+    const { names, vals } = mkHeader(extraCols);
+    const wb2 = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([names, vals]), '销售明细');
+    const b = XLSX.write(wb2, { type: 'array', bookType: 'xlsx' });
+    const out = await P.processFiles([{ name: 'h.xlsx', size: b.byteLength, async arrayBuffer(){ return b; } }]);
+    return out.sales[0] || {};
+  }
+  const blank = v => (v == null || v === '');
+
+  // 7.1 只有近似列 → 医院留空（不兼容）
+  let r = await mapSalesHeader(['首诊医院']);
+  ok('只有「首诊医院」列时，医院留空', blank(r.hospital));
+  r = await mapSalesHeader(['就诊医院']);
+  ok('只有「就诊医院」列时，医院留空', blank(r.hospital));
+  r = await mapSalesHeader(['医院']);
+  ok('只有「医院」列时，医院留空', blank(r.hospital));
+
+  // 7.2 只有「医疗单位」→ 取到
+  r = await mapSalesHeader(['医疗单位']);
+  eq('只有「医疗单位」列时，取到该列', r.hospital, '值<医疗单位>');
+
+  // 7.3 与近似列并存 → 无论顺序，都取医疗单位
+  r = await mapSalesHeader(['首诊医院', '医疗单位']);
+  eq('「首诊医院」在前、医疗单位在后 → 取医疗单位', r.hospital, '值<医疗单位>');
+  r = await mapSalesHeader(['医疗单位', '首诊医院']);
+  eq('「医疗单位」在前、首诊医院在后 → 取医疗单位', r.hospital, '值<医疗单位>');
+  r = await mapSalesHeader(['首诊医院', '就诊医院', '医院', '医疗单位']);
+  eq('三个近似列并存（医疗单位在最后）→ 仍取医疗单位', r.hospital, '值<医疗单位>');
+
+  // 7.4 列名带首尾空格仍命中
+  r = await mapSalesHeader([' 医疗单位 ']);
+  eq('列名带首尾空格 → 仍命中医疗单位', r.hospital, '值< 医疗单位 >');
+
+  // 7.5 近似列名不得被误当医疗单位（精确匹配，不是子串）
+  r = await mapSalesHeader(['医疗机构']);
+  ok('「医疗机构」不算医疗单位，医院留空', blank(r.hospital));
+  r = await mapSalesHeader(['医疗单位名称']);
+  ok('「医疗单位名称」不算医疗单位，医院留空', blank(r.hospital));
+  r = await mapSalesHeader(['医疗单位', '医疗机构']);
+  eq('「医疗单位」与「医疗机构」并存 → 取医疗单位', r.hospital, '值<医疗单位>');
+
+  // 7.6 列表侧：医院取医疗单位，且该值参与筛选
+  resetState();
+  ST.sales = [
+    SALE('己', '13900000006', '2026-08-01', 'A药房', '医疗单位甲', '医生甲', '科室甲'),
+  ];
+  rows = App.buildRows();
+  eq('列表医院 = 销售明细的医院字段（已由映射层限定为医疗单位）', rows[0].hospital, '医疗单位甲');
+  S.hospitals.add('医疗单位甲');
+  eq('医院筛选能命中该医疗单位', App.filterRows(rows).length, 1);
+  S.hospitals.clear();
+
+  // 7.7 映射常量与产物防线：hospital 关键字池只能是「医疗单位」，且必须在精确匹配集合内
+  const hr = global.Mapping.KEYWORD_RULES.find(r => r[0] === 'hospital');
+  eq('hospital 关键字池 = ["医疗单位"]', hr && hr[1], ['医疗单位']);
+  ok('hospital 在 EXACT_ONLY_FIELDS 中（不走子串匹配）',
+    global.Mapping.EXACT_ONLY_FIELDS.has('hospital'));
+  ok('kwHit 对 hospital 做精确匹配（近似列名不命中）',
+    global.Mapping.kwHit('hospital', '医疗单位', '医疗单位') === true &&
+    global.Mapping.kwHit('hospital', '首诊医院', '医疗单位') === false &&
+    global.Mapping.kwHit('hospital', '医疗机构', '医疗单位') === false);
+  for (const f of ['index.html', 'index.single.html']) {
+    const p = path.join(__dirname, '..', f);
+    if (!fs.existsSync(p)) continue;
+    const code = fs.readFileSync(p, 'utf8');
+    ok('产物 ' + f + ' 中 hospital 关键字池已改为 ["医疗单位"]',
+      /\["hospital",\s*\["医疗单位"\]\]/.test(code));
+    ok('产物 ' + f + ' 含 EXACT_ONLY_FIELDS 精确匹配机制', code.includes('EXACT_ONLY_FIELDS'));
+  }
+
   console.log('\n' + (fail === 0 ? '✅' : '❌') + ' 通过 ' + pass + ' / 失败 ' + fail);
   process.exit(fail === 0 ? 0 : 1);
 })();

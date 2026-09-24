@@ -52,7 +52,10 @@ const KEYWORD_RULES = [
   ["member_id",     ["会员号", "会员编号", "会员卡号"]],
   ["patient_name",  ["会员姓名", "客户姓名", "患者姓名", "姓名"]],
   ["phone",         ["会员电话", "手机号", "联系电话", "手机", "电话"]],
-  ["hospital",      ["医疗单位", "首诊医院", "就诊医院", "医院"]],
+  // 医院 = 只认「医疗单位」列（精确匹配，见 mapping.js 的 EXACT_ONLY_FIELDS）。
+  // 不要改回宽松关键字：销售明细里可能同时存在「首诊医院」「就诊医院」「医院」等列，
+  // 宽松匹配会按列顺序命中其中一个，取到与业务口径不符的值。
+  ["hospital",      ["医疗单位"]],
   ["pharmacy",      ["药房名称", "门店", "药店名称", "药店", "药房"]],
   ["physician",     ["处方医生", "开单医生", "医生"]],
   ["department",    ["处方科室", "科室", "就诊科室"]],
@@ -103,8 +106,19 @@ const KEYWORD_RULES_MULTI = [
   ["follow_note", ["随访小结", "小结", "随访记录", "患者反馈内容", "患者反馈", "备注"]],
 ];
 
+// 精确匹配字段：列标题去掉空白后必须与关键字【完全相等】才算命中。
+// 用途：某些字段的业务口径只允许一个确切列名，宽松子串匹配会误命中近似列。
+// 典型例子 hospital=「医疗单位」——销售明细里常有「首诊医院」「就诊医院」「某医院」等列，
+// 子串匹配会按列顺序任取其一，导致医院字段取错列。
+const EXACT_ONLY_FIELDS = new Set(["hospital"]);
+
 function normHeader(h) {
   return String(h == null ? "" : h).replace(/\s+/g, "").toLowerCase();
+}
+
+// 关键字匹配：精确字段用相等，其余用子串包含
+function kwHit(field, nc, kw) {
+  return EXACT_ONLY_FIELDS.has(field) ? nc === kw : nc.includes(kw);
 }
 
 function _cell(row, col) {
@@ -270,6 +284,7 @@ if (typeof window !== "undefined") {
     PRODUCT_FAMILIES, normalizeProduct, CATEGORIES, REPUR_PARTS, SUBSTATUS,
     TABLE_SIGNATURES, detectTableType, normHeader, _cell, _gtext,
     isPlaceholder, followupSignal, classifyFuReason, KEYWORD_RULES, KEYWORD_RULES_MULTI,
+    EXACT_ONLY_FIELDS, kwHit,
   };
 }
 })();

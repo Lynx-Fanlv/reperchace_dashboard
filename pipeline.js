@@ -59,17 +59,22 @@ function mapColumns(tableType, rawCols) {
   else prefix = f => f === "c_patient_name" || f === "cycle_days";
 
   const candList = rawCols.map((rc, idx) => [idx, normHeader(rc)]);
+  // 命中计数：精确字段（EXACT_ONLY_FIELDS，如 hospital）要求列名完全相等，
+  // 其余字段沿用宽松子串包含
+  const hitsOf = (field, nc) => {
+    let h = 0;
+    for (const kw of rules.find(r => r[0] === field)[1]) if (M.kwHit(field, nc, kw)) h++;
+    return h;
+  };
   for (const [field, kws] of rules) {
     if (!prefix(field)) continue;
     if (field === "exec_time") {
       // 执行时间 vs 计划执行时间：排除含「计划」的列
-      const clean = candList.filter(([, nc]) => !used.has(nc) && nc.includes("执行时间") && !nc.includes("计划"));
       // 注意：candList 的 key 是 idx，这里需要重新按 idx 过滤
       const cand = candList.filter(([idx]) => !used.has(idx) && !normHeader(rawCols[idx]).includes("计划") && normHeader(rawCols[idx]).includes("执行时间"));
       let best = null, bestHits = 0;
       for (const [idx, nc] of cand) {
-        let hits = 0;
-        for (const kw of kws) if (nc.includes(kw)) hits++;
+        const hits = hitsOf(field, nc);
         if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
       }
       if (best !== null) { assigned[field] = best; used.add(best); }
@@ -78,8 +83,7 @@ function mapColumns(tableType, rawCols) {
     let best = null, bestHits = 0;
     for (const [idx, nc] of candList) {
       if (used.has(idx)) continue;
-      let hits = 0;
-      for (const kw of kws) if (nc.includes(kw)) hits++;
+      const hits = hitsOf(field, nc);
       if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
     }
     if (best !== null) { assigned[field] = best; used.add(best); }

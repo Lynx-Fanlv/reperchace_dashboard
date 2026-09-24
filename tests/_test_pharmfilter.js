@@ -157,7 +157,9 @@ const clearSel = () => { S.pharmacies.clear(); S.hospitals.clear(); };
   eq('第 1 行数据=纯药房名（乙 / A药房）', ws2.getRow(2).values[iP2 + 1], 'A药房');
   eq('第 2 行数据=纯药房名（甲 / 末次 B药房，无提示）', ws2.getRow(3).values[iP2 + 1], 'B药房');
 
-  console.log('\n[10] 医院筛选不受影响（仍按末次购药医院）');
+  // 说明：医院筛选走的是 hospital 字段，该字段由 mapping 层限定为只认「医疗单位」列，
+  // 与药房筛选（走 pharmacy）互不影响。
+  console.log('\n[10] 医院筛选不受药房筛选影响（走 hospital 字段，与药房筛选独立）');
   clearSel(); S.hospitals.add('H1');
   rows = App.buildRows();
   eq('医院筛选后仍 2 行', rows.length, 2);
