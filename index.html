@@ -280,6 +280,31 @@
   /* 分类维护面板 */
   .reason-manager{margin-top:10px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px}
   .reason-manager.hidden{display:none}
+  /* 分类维护面板随小结换位到兄弟层：默认隐藏，仅在主程序点「管理分类」时显示 */
+  #reasonManager{margin:8px 0 4px}
+  /* 快照品种选择弹窗（doSnapshot 前确认快照包含哪些品种） */
+  .fam-pick-mask{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:2000;display:flex;
+    align-items:center;justify-content:center;padding:20px}
+  .fam-pick-box{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;
+    padding:16px 18px;width:min(460px,100%);max-height:80vh;display:flex;flex-direction:column;
+    box-shadow:0 12px 40px rgba(15,23,42,.22)}
+  .fp-head{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  .fp-head b{font-size:15px}
+  .fp-hint{font-size:12px;color:var(--muted);line-height:1.5}
+  .fp-list{border:1px solid var(--line);border-radius:10px;overflow:auto;min-height:80px;max-height:46vh}
+  .fp-item{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--line);
+    cursor:pointer;font-size:13px}
+  .fp-item:last-child{border-bottom:none}
+  .fp-item:hover{background:rgba(47,107,214,.05)}
+  .fp-item input{width:15px;height:15px;cursor:pointer}
+  .fp-item .fp-name{flex:1;font-weight:600}
+  .fp-item .fp-cnt{color:var(--muted);font-size:12px}
+  .fp-foot{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .fp-tools{display:flex;gap:10px}
+  .fp-tools a{color:var(--brand);cursor:pointer;font-size:12px;font-weight:600}
+  .fp-num{font-size:12px;color:var(--muted);margin-left:auto}
+  .fp-btns{display:flex;gap:8px}
+  .fp-btns button[disabled]{opacity:.5;cursor:not-allowed}
   .rm-head{font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
   .rm-hint{font-size:12px;font-weight:400;color:var(--muted);margin-left:8px}
   .rm-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
@@ -343,6 +368,7 @@
     </div>
 
     <!-- 整体小结（按品种分别总结，固定统计「本周」；未购药原因=患者明细标注汇总，分类可维护） -->
+    <!-- 注意：快照导出时整块 #summaryPanel 会被移除（见 app.js doSnapshot），因为快照内无法按筛选重算小结，留着易生误会 -->
     <div class="summary-panel hidden" id="summaryPanel">
       <div class="sp-head">
         <b>整体小结</b>
@@ -363,14 +389,16 @@
       </div>
       <pre class="sp-text" id="summaryText"></pre>
       <div class="sp-adjust hidden" id="summaryAdjust"></div>
-      <!-- 分类维护面板（未购药原因分类树：增删改/加子类/恢复默认；原因列选项与小结文案跟随） -->
-      <div class="reason-manager hidden" id="reasonManager">
-        <div class="rm-head">未购药原因分类维护<span class="rm-hint">修改后「未购药原因」列选项与小结文案同步更新</span></div>
-        <div class="rm-list" id="reasonManagerList"></div>
-        <div class="rm-foot">
-          <button class="btn ghost sm" id="reasonManagerAdd">+ 新增分类</button>
-          <button class="btn ghost sm" id="reasonManagerReset">恢复默认</button>
-        </div>
+    </div>
+    <!-- 分类维护面板（未购药原因分类树：增删改/加子类/恢复默认；原因列选项与小结文案跟随）
+         注意：留在 #summaryPanel 之外，避免随小结一起被移除——原因分类树必须随快照保存，
+         否则快照里「未购药原因」列只能显示 key 而非中文标签。 -->
+    <div class="reason-manager hidden" id="reasonManager">
+      <div class="rm-head">未购药原因分类维护<span class="rm-hint">修改后「未购药原因」列选项与小结文案同步更新</span></div>
+      <div class="rm-list" id="reasonManagerList"></div>
+      <div class="rm-foot">
+        <button class="btn ghost sm" id="reasonManagerAdd">+ 新增分类</button>
+        <button class="btn ghost sm" id="reasonManagerReset">恢复默认</button>
       </div>
     </div>
 
@@ -445,13 +473,13 @@
       <span class="fb-export">
         <button class="export" id="exportBtn" title="按当前脱敏开关导出（所见即所得）；三个开关都切「不脱敏」即得到全明文名单">导出名单</button>
         <button class="export" id="exportCallbackBtn" title="导出本轮填写了跟进备注 / 点选了未购药原因的行，下次分析时连同其他表一起上传即可纳入分析（含明文姓名与电话）">导出随访回传表</button>
-        <button class="export snap" id="snapshotDesenBtn">下载脱敏快照</button>
-        <button class="export snap" id="snapshotPlainBtn">下载不脱敏快照</button>
+        <button class="export snap" id="snapshotDesenBtn" title="快照只含当前筛选出的品种；点击后可改选要包含的品种">下载脱敏快照</button>
+        <button class="export snap" id="snapshotPlainBtn" title="快照只含当前筛选出的品种；点击后可改选要包含的品种">下载不脱敏快照</button>
       </span>
     </div>
 
-    <!-- 脱敏切换 + 列显隐 -->
-    <div class="filterbar" style="margin-top:6px">
+    <!-- 脱敏切换 + 列显隐（快照模式整条隐藏，见 app.js loadSnapshot：快照沿用生成时的脱敏状态） -->
+    <div class="filterbar" id="desenBar" style="margin-top:6px">
       <span class="desen-tog">
         <span class="dt-grp"><span class="dt-lbl">姓名</span>
           <button class="dt-btn active" data-field="name" data-mode="mask">脱敏</button>
@@ -1317,6 +1345,8 @@ const state = {
   periodType: "7d", periodStart: "", periodEnd: "",
   selFam: "",
   scopeNames: true, // 小结中是否呈现所选医院/药房名单（可开关）
+  snapFams: [],    // 快照内容范围（内嵌的品种全集，空=全部品种）。快照模式以此作为「品种」多选面板的选项清单，
+                   // 使快照内仍可在已内嵌品种间来回筛选；主程序模式恒为空（选项来自当前全量数据）
   reasonTree: cloneReasonTree(DEFAULT_REASON_TREE), // 用户维护后的分类树（随快照保存）
   fuAdj: {},   // { [fam]: { [分类key]: n } } 小结人数人工修正（仅存用户改过的值；key=分类树叶子 key）
 };
@@ -1525,12 +1555,17 @@ function buildRows() {
     const fam = s.product;
     const bp = (p.byProduct[fam] = p.byProduct[fam] || { purchases: [], _infoDate: {}, hospital: "", pharmacy: "", physician: "", member_id: "", department: "" });
     bp.purchases.push({ date: s.sales_time, qty: qtyNum(s.qty) });
-    // ---- 归属信息（医院/药房/科室/医生/会员号）取「销售时间最近一次的非空值」----
+    // ---- 归属信息（医院/药房/科室/医生/会员号）严格取「销售时间最近一次」的记录 ----
     // 不能取销售明细里的最后一行：销售明细报表常按销售时间【降序】导出，
-    // 末行反而是患者最早那次购药，会导致这三个字段与「最近购药」错位。
-    // 逐字段按日期比较（某字段在新记录里为空时，沿用该字段更早的非空值）。
+    // 末行反而是患者最早那次购药，会导致这几个字段与「最近购药」错位。
+    // 口径（2026-09-24 定）：**严格等于末次购药那条记录的值**——该条为空就显示为空，
+    // 不再回退到更早的非空值；这样「界面显示的值 ≡ 末次记录的值」，人工核对无歧义。
+    // 同一天有多条时（一笔购药被拆成多行）：按该日内最后一个非空值补齐，避免同日行的空值把字段冲掉。
     for (const f of ["hospital", "pharmacy", "member_id", "department", "physician"]) {
-      if (s[f] && s.sales_time >= (bp._infoDate[f] || "")) { bp[f] = s[f]; bp._infoDate[f] = s.sales_time; }
+      const prev = bp._infoDate[f] || "";
+      const d = s.sales_time;
+      if (d > prev) { bp[f] = s[f] || ""; bp._infoDate[f] = d; }
+      else if (d === prev && s[f]) { bp[f] = s[f]; }
     }
   }
 
@@ -1794,15 +1829,22 @@ function renderSummary(d) {
   } else {
     reasonBar.classList.add("hidden");
   }
-  buildMs("prodMs", d.by_product, state.products, "品种");
+  buildMs("prodMs", d.by_product, state.products, "品种", SNAP_MODE ? state.snapFams : null);
   buildMs("hospMs", d.by_hospital, state.hospitals, "医院");
   buildMs("pharmMs", d.by_pharmacy, state.pharmacies, "药房");
   buildMs("execMs", d.by_executor, state.executors, "随访人");
   updateFilterInfo();
 }
 
-function buildMs(msId, data, stateSet, label) {
-  const entries = Object.entries(data || {}).sort((a, b) => b[1] - a[1]);
+function buildMs(msId, data, stateSet, label, optionKeys) {
+  // optionKeys：候选选项清单（可含计数为 0 的项）。用于快照模式——快照内嵌品种可能被当前品种筛选
+  // 遮蔽而从计数表里消失，但选项必须保留，否则取消勾选后无法再勾回来。
+  // 主程序模式传 undefined，行为与原先完全一致（仅按计数表出选项）。
+  let entries = Object.entries(data || {}).sort((a, b) => b[1] - a[1]);
+  if (optionKeys && optionKeys.length) {
+    const seen = new Set(entries.map(e => e[0]));
+    for (const k of optionKeys) if (!seen.has(k)) { entries.push([k, 0]); seen.add(k); }
+  }
   const list = $("#" + msId + "List");
   list.innerHTML = entries.map(([k, v]) =>
     `<label><input type="checkbox" value="${esc(k)}" ${stateSet.has(k) ? "checked" : ""}><span>${esc(k)}</span><span class="ms-cnt">${v}</span></label>`).join("");
@@ -2201,13 +2243,10 @@ function buildSummaryText(fam) {
 function renderSummaryPanel() {
   const panel = $("#summaryPanel");
   if (!panel) return;
-  // 快照模式：只读展示保存的小结文本（快照行不含随访对象，不重算）
+  // 快照模式：快照内不含整体小结（无法按筛选重算，留着易生误会；见 doSnapshot 的移除逻辑），
+  // #summaryPanel 已被移除 → 无需渲染，直接返回即可
   if (SNAP_MODE) {
-    panel.classList.remove("hidden");
-    $("#summaryText").textContent = SUMMARY.text || "（快照未包含小结文本）";
-    $("#summaryFamChips").innerHTML = "";
-    $("#summaryAdjust").innerHTML = "";
-    $("#copySummaryBtn").classList.add("hidden");
+    panel.classList.add("hidden");
     return;
   }
   const fams = [...new Set(ALL_ROWS.map(r => r.product).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh"));
@@ -2956,11 +2995,89 @@ async function doExportCallback() {
 $("#exportCallbackBtn").onclick = () => doExportCallback();
 
 /* ============ 快照生成（自包含 HTML） ============ */
+// 快照内容范围（品种）选择：与用户确认后再生成
+//   · 快照只包含【勾选的品种】的行 —— 用于「只把 A 品种发出去」。
+//   · 勾选清单默认 = 当前品种筛选项（未筛则默认全选），可增可减。
+//   · 快照内仍保留「品种」筛选：内嵌品种之间可来回切换查看（选项清单见 snapFams）。
+// 返回：[品种名] / []（=全部品种） / null（取消）
+function askSnapshotFams() {
+  // 品种清单来源：ALL_ROWS（无筛选全量）。理论上两者品种集一致；若 ALL_ROWS 尚未填充
+  // （例如首次 refresh 尚未跑完），退回当前名单 DATA.rows，避免「明明有数据却弹不出品种清单」。
+  const src = (ALL_ROWS && ALL_ROWS.length) ? ALL_ROWS : DATA.rows;
+  const allFams = [...new Set(src.map(r => r.product).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "zh"));
+  if (!allFams.length) return null;
+  // 默认勾选：当前已筛品种；未筛 → 全部
+  const preset = state.products.size ? new Set([...state.products].filter(f => allFams.includes(f))) : new Set(allFams);
+  const items = allFams.map(f => {
+    const n = src.filter(r => r.product === f).length;
+    return { fam: f, n, on: preset.has(f) || !preset.size };
+  });
+  const overlay = document.createElement("div");
+  overlay.className = "fam-pick-mask";
+  overlay.innerHTML =
+    '<div class="fam-pick-box" role="dialog" aria-modal="true">' +
+      '<div class="fp-head"><b>选择快照包含的品种</b>' +
+        '<span class="fp-hint">快照只包含勾选的品种。打开快照后仍可在这些品种之间筛选查看。</span></div>' +
+      '<div class="fp-list">' + items.map(it =>
+        `<label class="fp-item"><input type="checkbox" value="${esc(it.fam)}" ${it.on ? "checked" : ""}>` +
+        `<span class="fp-name">${esc(it.fam)}</span><span class="fp-cnt">${it.n} 人</span></label>`).join("") +
+      '</div>' +
+      '<div class="fp-foot">' +
+        '<span class="fp-tools"><a data-act="all">全选</a><a data-act="none">清空</a></span>' +
+        '<span class="fp-num" id="fpNum"></span>' +
+        '<span class="fp-btns"><button class="btn ghost sm" data-act="cancel">取消</button>' +
+        '<button class="btn sm" data-act="ok">确定</button></span>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  const boxes = [...overlay.querySelectorAll(".fp-item input")];
+  const numEl = overlay.querySelector("#fpNum");
+  const syncNum = () => {
+    const n = boxes.filter(b => b.checked).length;
+    numEl.textContent = n === boxes.length ? `已选全部 ${n} 个品种` :
+      (n === 0 ? "未选品种" : `已选 ${n} / ${boxes.length} 个品种`);
+    overlay.querySelector('[data-act="ok"]').disabled = n === 0;
+  };
+  syncNum();
+  boxes.forEach(b => b.onchange = syncNum);
+  overlay.querySelectorAll(".fp-tools a").forEach(a => a.onclick = () => {
+    const on = a.dataset.act === "all";
+    boxes.forEach(b => b.checked = on);
+    syncNum();
+  });
+  // 点击遮罩空白处 = 取消
+  let done = false;
+  const finish = val => {
+    if (done) return;
+    done = true;
+    document.removeEventListener("keydown", onKey, true);
+    setTimeout(() => overlay.remove(), 0); // 延后移除，避免在 click 事件内改动 DOM 触发异常
+    resolve(val);
+  };
+  let resolve;
+  const p = new Promise(r => { resolve = r; });
+  overlay.querySelector('[data-act="cancel"]').onclick = () => finish(null);
+  overlay.querySelector('[data-act="ok"]').onclick = () =>
+    finish(boxes.filter(b => b.checked).map(b => b.value));
+  overlay.addEventListener("mousedown", e => { if (e.target === overlay) finish(null); });
+  const onKey = e => { if (e.key === "Escape") { e.preventDefault(); finish(null); } };
+  document.addEventListener("keydown", onKey, true);
+  return p;
+}
+
 async function doSnapshot(desen) {
   if (!DATA.rows.length) { alert("当前筛选无数据可生成快照"); return; }
+  const fams = await askSnapshotFams();      // 取消
+  if (fams === null) return;
+  if (!fams.length) { alert("未选择任何品种，已取消生成快照。"); return; }
+  // 空数组视为「全部品种」（兜底：理论上前面的弹窗至少勾 1 个，这里防御数据异常）
+  const scope = new Set(fams);
+  const srcRows = scope.size ? DATA.rows.filter(r => scope.has(r.product)) : DATA.rows.slice();
+  if (!srcRows.length) { alert("所选品种在当前筛选里没有数据，已取消生成快照。"); return; }
   showLoading(desen ? "正在生成脱敏快照…" : "正在生成不脱敏快照…");
   try {
-    const rows = DATA.rows.map(r => {
+    const rows = srcRows.map(r => {
       const c = Object.assign({}, r);
       delete c._matched; delete c._row_id;
       if (desen) {
@@ -2971,23 +3088,30 @@ async function doSnapshot(desen) {
       }
       return c;
     });
+    // 快照内嵌品种全集（升序）：供快照内「品种」多选面板固定选项，保证取消勾选后还能勾回来
+    const snapFams = [...new Set(rows.map(r => r.product).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "zh"));
     const snap = {
       desen, rows, notes: STORE.notes, reasonOverrides: STORE.reasonOverrides,
-      summary: CURRENT.summary, state: {
+      summary: buildSummary(rows),   // 统计卡片（状态计数/下钻/原因）在快照内可随筛选重算，保留
+      state: {
         weekSel: state.weekSel, refDate: state.refDate, weekEnd: state.weekEnd,
         stdCycle: state.stdCycle, pageSize: state.pageSize,
         cycleAlgo: state.cycleAlgo, cycleTol: state.cycleTol, qtyScale: state.qtyScale,
         q: state.q,
-        cats: [...state.cats], reasons: [...state.reasons], repurParts: [...state.repurParts],
-        products: [...state.products],
-        hospitals: [...state.hospitals], pharmacies: [...state.pharmacies], executors: [...state.executors],
+        // 打开快照时的初始筛选：沿用当前选中的品种（在本次范围内）；范围外的自动剔除
+        cats: [], reasons: [], repurParts: [],
+        products: snapFams.filter(f => scope.has(f)),
+        // 其余筛选不随快照带入：发送方常带着医院/药房筛选，接收方缺这些上下文容易误读；
+        // 快照内仍可自行筛选，选项齐全（含计数为 0 的项）
+        hospitals: [], pharmacies: [], executors: [],
+        snapFams,
         plainName: state.plainName, plainPhone: state.plainPhone, plainDoctor: state.plainDoctor, scopeNames: state.scopeNames,
         maskMode: state.maskMode,
         hiddenCols: [...state.hiddenCols],
         periodType: state.periodType, periodStart: state.periodStart, periodEnd: state.periodEnd,
         selFam: state.selFam, reasonTree: state.reasonTree, fuAdj: state.fuAdj,
       },
-      summaryText: SUMMARY.text,
       buildAt: new Date().toISOString(),
       note: "预计购药分析快照",
     };
@@ -2997,7 +3121,7 @@ async function doSnapshot(desen) {
       if(window.__SNAP__&&window.AppCore){window.AppCore.loadSnapshot(window.__SNAP__);}
       else{var ld=document.getElementById('loading');if(ld){ld.querySelector('.txt').textContent='快照加载失败：应用脚本未加载。';ld.classList.remove('hidden');}}
     })();`;
-    // 剥离库代码 + 注入数据/启动脚本：全部用真实 DOM 操作（快照为只读视图，去掉 Excel 解析库减小体积）。
+    // 剥离库代码 + 移除整体小结 + 注入数据/启动脚本：全部用真实 DOM 操作（快照为只读视图，去掉 Excel 解析库减小体积）。
     // 不能用文本正则：应用代码自身内联时也含 <script>/</body> 等字面，正则会误删应用代码或注入错位。
     const isLib = s => {
       const src = s.getAttribute && s.getAttribute("src") || "";
@@ -3006,6 +3130,12 @@ async function doSnapshot(desen) {
     };
     const libScripts = Array.from(document.querySelectorAll("script")).filter(isLib);
     libScripts.forEach(s => s.remove());
+    // 移除「整体小结」：快照内没有销售明细，小结数字无法随筛选重算，
+    // 保留会让人误以为数字跟着筛选走（用户明确要求去掉）。分类维护面板已挪到小结外层，不受影响。
+    const sumPanel = document.getElementById("summaryPanel");
+    const sumParent = sumPanel && sumPanel.parentNode;
+    const sumNext = sumPanel && sumPanel.nextSibling;
+    if (sumParent) sumParent.removeChild(sumPanel);
     const ds = document.createElement("script");
     ds.textContent = "window.__SNAP__=" + dataJson;
     const bs = document.createElement("script");
@@ -3014,14 +3144,30 @@ async function doSnapshot(desen) {
     document.body.appendChild(bs);
     const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
     ds.remove(); bs.remove();
+    // 放回页面（下次生成快照仍需该节点；若原位置节点已被移除则退回 appendChild）
+    if (sumParent) {
+      if (sumNext && sumNext.parentNode === sumParent) sumParent.insertBefore(sumPanel, sumNext);
+      else sumParent.appendChild(sumPanel);
+    }
     libScripts.forEach(s => document.head.appendChild(s)); // 放回页面（Excel 导出仍可用）
-    download(new Blob([html], { type: "text/html" }),
-      desen ? "预计购药名单_脱敏快照.html" : "预计购药名单_不脱敏快照.html");
+    download(new Blob([html], { type: "text/html" }), snapshotFileName(desen, snapFams));
   } catch (err) {
     alert("快照生成失败：" + (err && err.message ? err.message : err));
   } finally {
     hideLoading();
   }
+}
+
+// 快照文件名：带上品种标识，收到文件的人一眼知道这份名单的品种范围
+function snapshotFileName(desen, fams) {
+  const tail = desen ? "脱敏快照" : "不脱敏快照";
+  let mid = "";
+  if (fams && fams.length === 1) mid = "_" + fams[0];
+  else if (fams && fams.length > 1 && fams.length <= 3) mid = "_" + fams.join("+");
+  else if (fams && fams.length > 3) mid = "_多品种";
+  // 文件名安全化：去掉 Windows 不允许的字符
+  mid = mid.replace(/[\\/:*?"<>|]/g, "");
+  return `预计购药名单${mid}_${tail}.html`;
 }
 $("#snapshotDesenBtn").onclick = () => doSnapshot(true);
 $("#snapshotPlainBtn").onclick = () => {
@@ -3066,11 +3212,14 @@ function loadSnapshot(snap) {
   state.hospitals = new Set(s.hospitals || []);
   state.pharmacies = new Set(s.pharmacies || []);
   state.executors = new Set(s.executors || []);
+  // 快照内嵌品种全集：品种多选面板的固定选项清单（保证取消勾选后还能勾回来）
+  state.snapFams = Array.isArray(s.snapFams) ? s.snapFams.slice() : [];
+  // 脱敏状态沿用生成时的值（快照里的按钮已隐藏，接收方看到的就是生成时那一版掩码效果）
   state.plainName = !!s.plainName; state.plainPhone = !!s.plainPhone; state.plainDoctor = !!s.plainDoctor;
   state.maskMode = s.maskMode || "edge";
   state.scopeNames = s.scopeNames !== false;
   if (s.hiddenCols) state.hiddenCols = new Set(s.hiddenCols);
-  // 整体小结状态恢复（快照中只读展示保存的小结文本）
+  // 整体小结状态恢复（兼容：新版快照不含小结，无 summaryText / 面板已移除时全部跳过）
   state.periodType = s.periodType || "7d";
   state.periodStart = s.periodStart || ""; state.periodEnd = s.periodEnd || "";
   state.selFam = s.selFam || "";
@@ -3085,9 +3234,14 @@ function loadSnapshot(snap) {
     : "⚠️ 这是一份「不脱敏」快照：包含明文姓名、电话、医生等个人信息，仅可分享给可信接收方。";
   const fb = document.querySelector(".filebar"); if (fb) fb.classList.add("hidden");
   ["#exportBtn", "#exportCallbackBtn", "#snapshotDesenBtn", "#snapshotPlainBtn", "#clearAllBtn"].forEach(sl => { const el = $(sl); if (el) el.classList.add("hidden"); });
+  // 脱敏开关整条隐藏：快照沿用生成时的脱敏状态，接收方毋需（也无从）调整
+  const desenBar = $("#desenBar"); if (desenBar) desenBar.classList.add("hidden");
   ["#refDateInput", "#clearBtn"].forEach(id => $(id).disabled = true);
   document.querySelectorAll("#cycleInputs .ci-num").forEach(inp => inp.disabled = true);
   document.querySelectorAll(".mm-btn").forEach(b => b.disabled = true);
+  // 整体小结面板：新版快照已移除该节点（老快照兼容：仅隐藏，不报错）
+  const sumPanelEl = $("#summaryPanel"); if (sumPanelEl) sumPanelEl.classList.add("hidden");
+  const rmgEl = $("#reasonManager"); if (rmgEl) rmgEl.classList.add("hidden"); // 快照内不允许改分类树
   $("#dataInfo").textContent = `快照 · 生成于 ${new Date(snap.buildAt).toLocaleString("zh-CN")}`;
   $("#board").classList.remove("hidden");
   syncDesenBtns();
@@ -3097,11 +3251,10 @@ function loadSnapshot(snap) {
     by_product: full.by_product, by_hospital: full.by_hospital, by_executor: full.by_executor,
   }));
   renderTable();
-  // 快照模式：小结只读展示保存的文本（渲染面板会自动隐藏控制/修正区）
-  renderSummaryPanel();
+  renderSummaryPanel(); // 快照下直接返回（面板已移除），保留调用以兼容老快照
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason, askSnapshotFams, snapshotFileName, doSnapshot };
 })();
 
 </script>
