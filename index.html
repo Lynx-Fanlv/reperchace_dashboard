@@ -1483,12 +1483,17 @@ function buildRows() {
     const fam = s.product;
     const bp = (p.byProduct[fam] = p.byProduct[fam] || { purchases: [], _infoDate: {}, hospital: "", pharmacy: "", physician: "", member_id: "", department: "" });
     bp.purchases.push({ date: s.sales_time, qty: qtyNum(s.qty) });
-    // ---- 归属信息（医院/药房/科室/医生/会员号）取「销售时间最近一次的非空值」----
+    // ---- 归属信息（医院/药房/科室/医生/会员号）严格取「销售时间最近一次」的记录 ----
     // 不能取销售明细里的最后一行：销售明细报表常按销售时间【降序】导出，
-    // 末行反而是患者最早那次购药，会导致这三个字段与「最近购药」错位。
-    // 逐字段按日期比较（某字段在新记录里为空时，沿用该字段更早的非空值）。
+    // 末行反而是患者最早那次购药，会导致这几个字段与「最近购药」错位。
+    // 口径（2026-09-24 定）：**严格等于末次购药那条记录的值**——该条为空就显示为空，
+    // 不再回退到更早的非空值；这样「界面显示的值 ≡ 末次记录的值」，人工核对无歧义。
+    // 同一天有多条时（一笔购药被拆成多行）：按该日内最后一个非空值补齐，避免同日行的空值把字段冲掉。
     for (const f of ["hospital", "pharmacy", "member_id", "department", "physician"]) {
-      if (s[f] && s.sales_time >= (bp._infoDate[f] || "")) { bp[f] = s[f]; bp._infoDate[f] = s.sales_time; }
+      const prev = bp._infoDate[f] || "";
+      const d = s.sales_time;
+      if (d > prev) { bp[f] = s[f] || ""; bp._infoDate[f] = d; }
+      else if (d === prev && s[f]) { bp[f] = s[f]; }
     }
   }
 

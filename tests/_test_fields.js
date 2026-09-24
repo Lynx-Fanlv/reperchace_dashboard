@@ -116,14 +116,37 @@ function resetState() {
     eq(label + '：医生取销售时间最新的一条', rows[0].physician, '新医生');
   }
 
-  console.log('\n[4b] 最新一条里某字段为空 → 该字段沿用更早的非空值');
+  console.log('\n[4b] 最新一条里某字段为空 → 该字段即为空（严格取末次记录，不回退到更早的非空值）');
   ST.sales = [
     SALE('己', '13900000006', '2026-09-01', 'A药房', '新医院', '新医生', ''), // 科室缺失
     SALE('己', '13900000006', '2026-07-01', 'A药房', '旧医院', '旧医生', '旧科室'),
   ];
   rows = App.buildRows();
-  eq('医院仍取最新的非空值', rows[0].hospital, '新医院');
-  eq('科室沿用更早的非空值（不回退为空）', rows[0].department, '旧科室');
+  eq('医院取末次记录（非空）', rows[0].hospital, '新医院');
+  eq('末次记录科室为空 → 科室即为空（不再回退到「旧科室」）', rows[0].department, '');
+  eq('末次记录医生有值 → 医生为新医生', rows[0].physician, '新医生');
+
+  console.log('\n[4d] 严格口径的正向保证：末次记录的值一定胜出');
+  ST.sales = [
+    SALE('辛', '13900000008', '2026-09-01', 'B药房', '新医院', '新医生', '新科室'),
+    SALE('辛', '13900000008', '2026-07-01', 'A药房', '旧医院', '旧医生', '旧科室'),
+  ];
+  rows = App.buildRows();
+  eq('医生/科室/医院 均取末次记录', [rows[0].physician, rows[0].department, rows[0].hospital].join('|'),
+    '新医生|新科室|新医院');
+
+  console.log('\n[4e] 同一天多条（一笔购药拆多行）→ 用该日内最后一个非空值，且与行序无关');
+  const SAME_A = [
+    SALE('壬', '13900000009', '2026-09-01', 'A药房', '新医院', '', '新科室'),
+    SALE('壬', '13900000009', '2026-09-01', 'A药房', '新医院', '同日医生', ''),
+  ];
+  for (const [label, data] of [['原序', SAME_A], ['反序', [SAME_A[1], SAME_A[0]]]]) {
+    ST.sales = data.slice();
+    rows = App.buildRows();
+    eq(label + '：医生取该日非空值', rows[0].physician, '同日医生');
+    eq(label + '：科室取该日非空值', rows[0].department, '新科室');
+    eq(label + '：医院', rows[0].hospital, '新医院');
+  }
 
   console.log('\n[4c] 药房字段同样按日期取最新（保证与实际末次购药药房一致）');
   ST.sales = [
