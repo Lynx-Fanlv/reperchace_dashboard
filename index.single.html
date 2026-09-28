@@ -1205,6 +1205,17 @@ function phoneDigits(v) {
   return String(v).replace(/\D/g, "");
 }
 
+// 患者唯一键：**姓名 + 电话**（两者都参与，缺一不可）
+// 为什么不能只用一个字段：
+//   · 只用电话 → 同一号码被不同姓名共用（家人共用号码 / 前台代留）时，两个不同患者会被合并成一个；
+//   · 只用姓名 → 重名（同名不同电话）时，两个不同患者会被合并成一个。
+// 两者都空时退化为「未知\u0000」——此时数据里确实没有可区分的信息，只能当作同一条记录。
+// 分隔符用 \u0000：姓名与电话归一化后都不可能含它，不会与真实取值碰撞。
+function patientKey(name, phone) {
+  const n = String(name == null ? "" : name).trim() || "未知";
+  return n + "\u0000" + phoneDigits(phone);
+}
+
 // 脱敏姓名 / 电话 / 医生
 // 姓名/医生脱敏方式 maskMode：edge=首尾保留（张*三/欧**德）、first=首字保留（张**/欧***）、all=全部隐藏（***）
 // 替换几个字符就有几个 *
@@ -1239,7 +1250,7 @@ function desensitize(rec, namePlain = false, phonePlain = false, doctorPlain = f
 
 if (typeof window !== "undefined") {
   window.Pipeline = { cellStr, datePart, mapColumns, detectHeaderRow, normalizeSheet,
-    loadWorkbook, processFiles, detectFileType, desensitize, phoneDigits, fmtDateTime };
+    loadWorkbook, processFiles, detectFileType, desensitize, phoneDigits, patientKey, fmtDateTime };
 }
 })();
 
@@ -1525,7 +1536,7 @@ function buildRows() {
     const owner = {};
     for (const s of sales) {
       if (!s.sales_time || !s.product) continue;
-      owner[(s.pharmacy || "未知") + "\u0000" + (phoneDigits(s.phone) || s.patient_name || "未知") + "\u0000" + s.product] = s.pharmacy || "未知";
+      owner[(s.pharmacy || "未知") + "\u0000" + P.patientKey(s.patient_name, s.phone) + "\u0000" + s.product] = s.pharmacy || "未知";
     }
     const cnt = {};
     for (const key in owner) cnt[owner[key]] = (cnt[owner[key]] || 0) + 1;
@@ -1537,15 +1548,17 @@ function buildRows() {
   if (pharmSel.size) {
     for (const s of sales) {
       if (!s.sales_time || !s.product) continue;
-      const k = phoneDigits(s.phone) || (s.patient_name || "未知");
+      const k = P.patientKey(s.patient_name, s.phone);
       const fam = s.product;
       ((allRecs[k] = allRecs[k] || {})[fam] = allRecs[k][fam] || []).push({ date: s.sales_time, pharmacy: s.pharmacy || "未知" });
     }
   }
 
   // ---- 销售按患者聚合（基于已按药房过滤的记录）----
-  const patMap = {}; // key: phoneDigits || name
-  const keyOf = r => phoneDigits(r.phone) || (r.patient_name || "未知");
+  // 患者唯一键 = 姓名 + 电话（两者都参与，见 Pipeline.patientKey）。
+  // 只按电话会在「同号不同名」时把两个患者并成一个；只按姓名会在「重名」时并成一个。
+  const patMap = {}; // key: 姓名\u0000电话
+  const keyOf = r => P.patientKey(r.patient_name, r.phone);
   for (const s of scoped) {
     if (!s.sales_time || !s.product) continue;
     const k = keyOf(s);
@@ -1570,7 +1583,7 @@ function buildRows() {
   }
 
   // ---- 随访按患者索引 ----
-  const fuByKey = {}; // key -> [fu]
+  const fuByKey = {}; // key: 电话数字 -> [fu]
   const fuByName = {};
   for (const fu of followups) {
     const k = phoneDigits(fu.phone);
@@ -1578,10 +1591,22 @@ function buildRows() {
     if (k) (fuByKey[k] = fuByKey[k] || []).push(fu);
     if (nm) (fuByName[nm] = fuByName[nm] || []).push(fu);
   }
+  // 重名判定：同一姓名在本次销售数据里对应了多个电话 → 该姓名不唯一。
+  // 交易表里随访常缺电话，只能按姓名回退匹配；但重名时回退会把两个不同患者的随访混在一起，
+  // 表现为「两个人被识别成一个人」（状态/未购药原因互相串）。故重名一律不回退：
+  // 宁可不匹配（走「无随访」分支），也不把别人的随访安到他头上。
+  const namePhones = {};
+  for (const s of scoped) {
+    const n = (s.patient_name || "").trim();
+    if (!n) continue;
+    (namePhones[n] = namePhones[n] || new Set()).add(phoneDigits(s.phone));
+  }
+  const isAmbiguousName = n => !!(n && namePhones[n] && namePhones[n].size > 1);
   const fuIndex = (name, phone) => {
     const k = phoneDigits(phone);
-    const list = (k && fuByKey[k]) || fuByName[name] || [];
-    return list;
+    if (k && fuByKey[k]) return fuByKey[k];
+    if (name && !isAmbiguousName(name)) return fuByName[name] || [];
+    return [];
   };
   const fuDate = fu => P.datePart(fu.exec_time) || P.datePart(fu.plan_time) || null;
 
@@ -2127,8 +2152,9 @@ function buildSummaryStats(fam) {
     if (s.product !== fam || !s.sales_time) continue;
     if (state.hospitals.size && !state.hospitals.has(s.hospital || "未知")) continue;
     if (state.pharmacies.size && !state.pharmacies.has(s.pharmacy || "未知")) continue;
-    const k = phoneDigits(s.phone) || s.patient_name || "";
-    if (!k) continue;
+    // 姓名与电话都空 → 无法归属到任何患者，跳过（与主聚合不同：小结不统计匿名记录）
+    if (!(s.patient_name || "").trim() && !phoneDigits(s.phone)) continue;
+    const k = P.patientKey(s.patient_name, s.phone); // 姓名 + 电话，避免重名/同号被并成一人
     (pat[k] = pat[k] || { name: s.patient_name || "", phone: s.phone || "", purchases: [] }).purchases.push({ date: s.sales_time, qty: qtyNum(s.qty) });
   }
   const cycleOf = p => STORE.cycles[p.name || p.phone] || state.stdCycle[fam] || 30;
@@ -2528,8 +2554,11 @@ function applyCallbackRecords(followups) {
   let nNote = 0, nReason = 0;
   for (const fu of (followups || [])) {
     if (String(fu.summary_type || "").trim() !== CB_SUMMARY_TYPE) continue;
-    const key = phoneDigits(fu.phone) || String(fu.patient_name || "").trim();
-    if (!key || !fu.product) continue;
+    // 回传表同时带「患者姓名」和「联系电话」，用与 buildRows 完全相同的键（姓名\u0000电话），
+    // 否则回填的备注 / 未购药原因会绑不到行上。
+    const hasIdentity = !!String(fu.patient_name || "").trim() || !!phoneDigits(fu.phone);
+    if (!hasIdentity || !fu.product) continue;
+    const key = P.patientKey(fu.patient_name, fu.phone);
     const nk = key + "::" + fu.product;
     const note = String(fu.callback_note || "").trim();
     if (note && !String(STORE.notes[nk] || "").trim()) { STORE.notes[nk] = note; nNote++; }

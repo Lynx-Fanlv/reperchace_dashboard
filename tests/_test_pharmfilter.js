@@ -119,7 +119,8 @@ const clearSel = () => { S.pharmacies.clear(); S.hospitals.clear(); };
   rows = App.buildRows();
   eq('随访文本判得出原因 → 以随访为准（不覆盖成转渠道）', rows.find(r => r.patient_name === '甲').reason, 'delay');
 
-  ST.reasonOverrides['13900000001::百泽安'] = 'dropout_econ';
+  // 键口径 = 姓名\u0000电话（Pipeline.patientKey）；不能写死成「电话::品种」
+  ST.reasonOverrides[global.Pipeline.patientKey('甲', '13900000001') + '::百泽安'] = 'dropout_econ';
   rows = App.buildRows();
   eq('人工点选优先级最高', rows.find(r => r.patient_name === '甲').reason, 'dropout_econ');
   ST.reasonOverrides = {}; ST.followups = [];

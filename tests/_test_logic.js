@@ -173,7 +173,8 @@ function assert(cond, msg) {
   App.state.refDate = '2026-08-28';
   r = run([sales('甲', '10000000001', '2026-08-03', '百泽安')],
     [fu('甲', '10000000001', '2026-08-10', '百泽安', null)], {});
-  App.STORE.reasonOverrides['10000000001::百泽安'] = 'delay';
+  // 键口径 = 姓名\u0000电话（Pipeline.patientKey）；不能写死成「电话::品种」
+  App.STORE.reasonOverrides[global.Pipeline.patientKey('甲', '10000000001') + '::百泽安'] = 'delay';
   r = App.buildRows()[0];
   assert(r.status === '应回购' && r.reason === 'delay', 'override 未购药原因 → delay');
 

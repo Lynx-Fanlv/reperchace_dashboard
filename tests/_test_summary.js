@@ -134,7 +134,7 @@ function assert(cond, msg) {
 
   console.log('\n===== ④ 患者标注驱动统计（明细点选原因 → 小结跟随） =====');
   // 将「庚」（原自动判定=脱落·换药）在原因列覆盖为「推迟购药」→ 推迟1→2、脱落·换药1→0、脱落父类2→1
-  App.STORE.reasonOverrides['10000000007::百泽安'] = 'delay';
+  App.STORE.reasonOverrides[global.Pipeline.patientKey('庚', '10000000007') + '::百泽安'] = 'delay';
   await App.refresh(); // 重建全量行（行 reason = 人工覆盖优先）
   const stD = App.buildSummaryStats('百泽安');
   assert(stD.cnt.delay === 2 && stD.cnt.dropout_switch === 0 && stD.cnt.dropout === 1, `覆盖庚为推迟购药 → delay2/dropout_switch0/dropout1（实际 ${stD.cnt.delay}/${stD.cnt.dropout_switch}/${stD.cnt.dropout}）`);
@@ -167,7 +167,7 @@ function assert(cond, msg) {
   assert(textN.includes('⑥新分类X0人'), `新增分类 → 文案出现第⑥项（实际: ${textN.split('\n')[2]}）`);
   // 给「庚」标注新分类 → 统计 1 人
   const newKey = App.state.reasonTree[App.state.reasonTree.length - 1].key;
-  App.STORE.reasonOverrides['10000000007::百泽安'] = newKey;
+  App.STORE.reasonOverrides[global.Pipeline.patientKey('庚', '10000000007') + '::百泽安'] = newKey;
   await App.refresh();
   const stN = App.buildSummaryStats('百泽安');
   assert(stN.cnt[newKey] === 1, `新分类标注统计 1 人（实际 ${stN.cnt[newKey]}）`);
@@ -175,7 +175,7 @@ function assert(cond, msg) {
   App.removeReason(newKey); await App.refresh();
   textN = App.buildSummaryText('百泽安').text;
   assert(!textN.includes('新分类X'), '删除分类后文案移除');
-  assert(App.STORE.reasonOverrides['10000000007::百泽安'] === undefined, '删除分类后患者标注清理');
+  assert(App.STORE.reasonOverrides[global.Pipeline.patientKey('庚', '10000000007') + '::百泽安'] === undefined, '删除分类后患者标注清理');
   // 恢复默认树
   App.state.reasonTree = App.cloneReasonTree(App.DEFAULT_REASON_TREE); await App.refresh();
   const textR = App.buildSummaryText('百泽安').text;

@@ -311,6 +311,17 @@ function phoneDigits(v) {
   return String(v).replace(/\D/g, "");
 }
 
+// 患者唯一键：**姓名 + 电话**（两者都参与，缺一不可）
+// 为什么不能只用一个字段：
+//   · 只用电话 → 同一号码被不同姓名共用（家人共用号码 / 前台代留）时，两个不同患者会被合并成一个；
+//   · 只用姓名 → 重名（同名不同电话）时，两个不同患者会被合并成一个。
+// 两者都空时退化为「未知\u0000」——此时数据里确实没有可区分的信息，只能当作同一条记录。
+// 分隔符用 \u0000：姓名与电话归一化后都不可能含它，不会与真实取值碰撞。
+function patientKey(name, phone) {
+  const n = String(name == null ? "" : name).trim() || "未知";
+  return n + "\u0000" + phoneDigits(phone);
+}
+
 // 脱敏姓名 / 电话 / 医生
 // 姓名/医生脱敏方式 maskMode：edge=首尾保留（张*三/欧**德）、first=首字保留（张**/欧***）、all=全部隐藏（***）
 // 替换几个字符就有几个 *
@@ -345,6 +356,6 @@ function desensitize(rec, namePlain = false, phonePlain = false, doctorPlain = f
 
 if (typeof window !== "undefined") {
   window.Pipeline = { cellStr, datePart, mapColumns, detectHeaderRow, normalizeSheet,
-    loadWorkbook, processFiles, detectFileType, desensitize, phoneDigits, fmtDateTime };
+    loadWorkbook, processFiles, detectFileType, desensitize, phoneDigits, patientKey, fmtDateTime };
 }
 })();

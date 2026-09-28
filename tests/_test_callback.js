@@ -39,11 +39,12 @@ const ok = (name, cond) => { if (cond) { pass++; console.log('  ✅ ' + name); }
 const S = App.state, ST = App.STORE;
 
 // 三条名单行：A 填了备注、B 点选了原因、C 什么都没填
-const rowA = { _key: '13800001111', product: '百泽安', patient_name: '张小三', phone: '13800001111', physician: '李大夫',
+// _key 必须与 buildRows 生成的一致（姓名\u0000电话），否则回传表往返后键对不上、备注绑不回行
+const rowA = { _key: P.patientKey('张小三', '13800001111'), product: '百泽安', patient_name: '张小三', phone: '13800001111', physician: '李大夫',
   executor: '刘倩', fu_note: '原始随访小结：患者表示会按时购药', status: '应回购', repur_part: '应回未回', reason: '', days_to_due: 2 };
-const rowB = { _key: '13900002222', product: '百悦泽', patient_name: '李四', phone: '13900002222', physician: '王医生',
+const rowB = { _key: P.patientKey('李四', '13900002222'), product: '百悦泽', patient_name: '李四', phone: '13900002222', physician: '王医生',
   executor: '高金敏', fu_note: '原始随访小结：电话未接通', status: '已逾期', repur_part: '', reason: '', days_to_due: -5 };
-const rowC = { _key: '13700003333', product: '百泽安', patient_name: '王五', phone: '13700003333', physician: '赵医生',
+const rowC = { _key: P.patientKey('王五', '13700003333'), product: '百泽安', patient_name: '王五', phone: '13700003333', physician: '赵医生',
   executor: '刘倩', fu_note: '', status: '未到期', repur_part: '', reason: '', days_to_due: 9 };
 App.DATA.rows = [rowA, rowB, rowC];
 
