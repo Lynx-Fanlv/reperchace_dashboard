@@ -468,9 +468,148 @@ function desensitize(rec, namePlain = false, phonePlain = false, doctorPlain = f
   return out;
 }
 
+/* ============================================================
+ * 本地留档（OPFS）—— 「下次不用重新上传」
+ * ============================================================
+ * 存什么：**只存销售明细**（按品种分目录）。
+ *   - 随访 / 周期是「患者维度、非品种维度」，且带有时效性（本次结论优先），故不留档、只用本次上传的。
+ *   - 销售明细是「品种维度」，按品种切分天然对齐；且回购预测最依赖完整购药史，留档价值最高。
+ *
+ * 目录结构：<root>/留档/销售/<品种>/sales.json
+ *   每个文件 = { version, product, updated_at, records: [...] }
+ *
+ * 为什么用 OPFS 而不是让用户选真实文件夹：
+ *   - OPFS 读写零授权弹窗，用户体验最省事；实测建目录/写/读回均可用，配额约 10 GB。
+ *   - 我们不要求「拿到原始 Excel 文件」（留档目的只是免重传），因此不需要真实磁盘路径。
+ *   - 患者数据落在浏览器沙箱内，比散落到磁盘明文目录更合规。
+ *
+ * ⚠️ 数据可能被浏览器回收：实测本环境 storage.persist() 返回 false，
+ *    意味着这些数据属 best-effort，磁盘紧张时浏览器有权清理。
+ *    → 因此所有读取操作在失败/缺失时**一律静默降级为「无历史」**（返回空），绝不抛错吓用户。
+ *
+ * ⚠️ 存储按「源(origin)」隔离：file:// 打开与 https:// 打开是两套独立存储，互不连通。
+ */
+
+const OPFS_AVAILABLE = (() => {
+  try {
+    return typeof navigator !== "undefined" && !!navigator.storage
+      && typeof navigator.storage.getDirectory === "function";
+  } catch (e) { return false; }
+})();
+
+// 品种名做目录名需要消毒（Windows/POSIX 都不许的字符 + 控制字符）
+function _safeDirName(s) {
+  const t = String(s == null ? "" : s).trim();
+  if (!t) return "_未命名";
+  return t.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 80) || "_未命名";
+}
+
+async function _opfsSalesDir(product, create) {
+  if (!OPFS_AVAILABLE) return null;
+  try {
+    const root = await navigator.storage.getDirectory();
+    const base = await root.getDirectoryHandle("留档", { create: !!create });
+    const sales = await base.getDirectoryHandle("销售", { create: !!create });
+    return await sales.getDirectoryHandle(_safeDirName(product), { create: !!create });
+  } catch (e) { return null; }
+}
+
+// 本地留档是否可用（供 UI 决定要不要显示相关入口）
+function archiveSupported() { return OPFS_AVAILABLE; }
+
+// 读取某品种的留档销售记录；无留档 / 读取失败 → 返回 null（调用方当「无历史」处理）
+async function loadArchiveSales(product) {
+  const dir = await _opfsSalesDir(product, false);
+  if (!dir) return null;
+  try {
+    const fh = await dir.getFileHandle("sales.json");
+    const text = await (await fh.getFile()).text();
+    const obj = JSON.parse(text);
+    if (!obj || !Array.isArray(obj.records)) return null;
+    return obj; // { version, product, updated_at, records }
+  } catch (e) {
+    return null; // 文件不存在 / JSON 损坏 / 权限被回收 —— 一律当无历史
+  }
+}
+
+// 写入某品种的留档（**整品种覆盖**，不做增量合并：本次数据已是「历史+本次」合并后的结果）
+async function saveArchiveSales(product, records) {
+  const dir = await _opfsSalesDir(product, true);
+  if (!dir) return false;
+  try {
+    const fh = await dir.getFileHandle("sales.json", { create: true });
+    const w = await fh.createWritable();
+    await w.write(JSON.stringify({
+      version: 1,
+      product: product,
+      updated_at: fmtDateTime(new Date()),
+      records: records || [],
+    }));
+    await w.close();
+    return true;
+  } catch (e) { return false; }
+}
+
+// 列出本地留档里所有品种（含各自的记录条数与更新时间），按品种名排序。
+// 读取顺序：遍历「销售」目录下的子目录，逐个尝试读 sales.json。
+async function listArchiveProducts() {
+  if (!OPFS_AVAILABLE) return [];
+  const out = [];
+  try {
+    const root = await navigator.storage.getDirectory();
+    const base = await root.getDirectoryHandle("留档", { create: false });
+    const sales = await base.getDirectoryHandle("销售", { create: false });
+    for await (const [name, handle] of sales.entries()) {
+      if (!handle || handle.kind !== "directory") continue;
+      let meta = null;
+      try {
+        const fh = await handle.getFileHandle("sales.json");
+        const obj = JSON.parse(await (await fh.getFile()).text());
+        if (obj && Array.isArray(obj.records)) {
+          meta = { product: obj.product || name, count: obj.records.length, updated_at: obj.updated_at || "" };
+        }
+      } catch (e) { /* 该子目录没有可读留档 → 跳过 */ }
+      if (meta) out.push(meta);
+    }
+  } catch (e) {
+    return []; // 「留档」目录还不存在 = 从未留档过，属正常
+  }
+  return out.sort((a, b) => String(a.product).localeCompare(String(b.product), "zh"));
+}
+
+// 删除某品种的留档（暂未接 UI，留给后续「清理留档」入口）
+async function removeArchiveSales(product) {
+  if (!OPFS_AVAILABLE) return false;
+  try {
+    const root = await navigator.storage.getDirectory();
+    const base = await root.getDirectoryHandle("留档");
+    const sales = await base.getDirectoryHandle("销售");
+    await sales.removeEntry(_safeDirName(product), { recursive: true });
+    return true;
+  } catch (e) { return false; }
+}
+
+// 取出指定品种集合的历史销售记录，拼成一个数组（供与本次数据合并后去重）。
+// products 为空 → 返回空数组，**不读任何历史**（保证「本次品种无历史」时零副作用）。
+async function loadArchiveSalesFor(products) {
+  const list = Array.isArray(products) ? products.filter(Boolean) : [];
+  const out = [];
+  const loaded = [];
+  for (const p of list) {
+    const obj = await loadArchiveSales(p);
+    if (obj && Array.isArray(obj.records) && obj.records.length) {
+      for (const r of obj.records) out.push(r);
+      loaded.push({ product: p, count: obj.records.length, updated_at: obj.updated_at || "" });
+    }
+  }
+  return { records: out, loaded };
+}
+
 if (typeof window !== "undefined") {
   window.Pipeline = { cellStr, datePart, mapColumns, detectHeaderRow, normalizeSheet,
     loadWorkbook, processFiles, detectFileType, desensitize, phoneDigits, patientKey, fmtDateTime,
-    dedupSales, salesDedupKey };
+    dedupSales, salesDedupKey,
+    archiveSupported, loadArchiveSales, saveArchiveSales, listArchiveProducts,
+    removeArchiveSales, loadArchiveSalesFor };
 }
 })();

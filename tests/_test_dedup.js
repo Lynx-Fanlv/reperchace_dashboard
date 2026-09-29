@@ -227,13 +227,18 @@ console.log("\n===== [14c] 详情表对特殊字符做转义（防注入/防破�
 console.log("\n===== [14d] 去重发生在「分析」阶段，且在品种提取之前 =====");
 {
   const src = fs.readFileSync(path.join(R, "app.js"), "utf8");
-  const iDedup = src.indexOf("const dd = P.dedupSales(res.sales)");
+  // ⚠️ 新一轮改动：去重入参不再是 res.sales，而是「本次 + 所选历史」的合并结果 allSales。
+  //    因此这里改为断言 allSales 链路，别再拿旧字符串 "dedupSales(res.sales)" 去匹配（已不存在）。
+  const iMerge = src.indexOf("allSales = res.sales.concat(arc.records)");
+  const iDedup = src.indexOf("const dd = P.dedupSales(allSales)");
   const iAssign = src.indexOf("STORE.sales = dd.records");
   const iProducts = src.indexOf("[...new Set(dd.records.map(s => s.product)");
-  ok(iDedup > 0, "分析流程调用了 P.dedupSales");
+  ok(iMerge > 0, "历史明细与本次合并（allSales = 本次 + 所选历史）");
+  ok(iDedup > iMerge, "分析流程对**合并结果**调用 P.dedupSales（历史与本次的重叠行也会被去掉）");
   ok(iAssign > iDedup, "去重结果赋给 STORE.sales");
   ok(iProducts > iAssign, "品种列表从去重后的记录提取（duplicate 的品种不会被重复计入）");
   ok(src.indexOf("STORE.sales = res.sales") === -1, "旧的「未去重直接赋值」已不存在");
+  ok(src.indexOf("P.dedupSales(res.sales)") === -1, "旧的「只对本次去重」已不存在（否则历史重叠行会重复计入）");
 }
 
 console.log("\n===== [15] 产物防线：去重逻辑已进构建产物 =====");
@@ -244,7 +249,7 @@ console.log("\n===== [15] 产物防线：去重逻辑已进构建产物 =====");
     ok(/function salesDedupKey/.test(c), f + " 含 salesDedupKey");
     ok(/ticket_no/.test(c), f + " 含 ticket_no 字段");
     ok(/id="dedupNotice"/.test(c), f + " 含去重提示条容器");
-    ok(/dedupSales\(res\.sales\)/.test(c), f + " 分析流程已接入去重调用");
+    ok(/dedupSales\(allSales\)/.test(c), f + " 分析流程已接入去重调用（对本次+历史合并结果）");
   }
 }
 

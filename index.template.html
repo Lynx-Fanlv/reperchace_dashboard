@@ -320,6 +320,31 @@
   .dd-tbl td{padding:4px 6px;border-bottom:1px solid var(--line);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dd-more{font-size:11px;color:var(--muted);margin-top:6px}
+  /* 本地留档加载确认弹窗（OPFS） */
+  .arc-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:2000;
+    display:flex;align-items:center;justify-content:center;padding:20px}
+  .arc-mask.hidden{display:none}
+  .arc-box{background:#fff;border-radius:14px;max-width:520px;width:100%;
+    box-shadow:0 18px 48px rgba(15,23,42,.24);overflow:hidden;max-height:82vh;display:flex;flex-direction:column}
+  .arc-head{padding:14px 18px 10px;border-bottom:1px solid var(--line)}
+  .arc-head b{font-size:14px;color:var(--text);font-weight:600}
+  .arc-head .arc-sub{font-size:12px;color:var(--muted);line-height:1.6;margin-top:6px}
+  .arc-body{padding:12px 18px;overflow:auto;flex:1 1 auto}
+  .arc-sec{font-size:11px;color:var(--muted);margin:2px 0 8px}
+  .arc-list{display:flex;flex-direction:column;gap:6px}
+  .arc-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);
+    border-radius:9px;cursor:pointer;font-size:13px;color:var(--text)}
+  .arc-item:hover{border-color:var(--brand);background:var(--brand-soft)}
+  .arc-item input{flex:0 0 auto;cursor:pointer;margin:0}
+  .arc-item .arc-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .arc-item .arc-meta{flex:0 0 auto;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .arc-item .arc-tag{flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:20px;
+    background:var(--brand-soft);color:var(--brand);border:1px solid var(--line)}
+  .arc-empty{font-size:12px;color:var(--muted);padding:6px 0}
+  .arc-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;background:#fafbfc}
+  .arc-foot .btn{min-width:92px}
+  .arc-foot .btn.ghost{background:#fff;color:var(--text);border:1px solid var(--line)}
+  .arc-foot .btn.ghost:hover{border-color:var(--brand);color:var(--brand)}
   /* 整体小结面板 */
   .summary-panel{margin-top:14px;background:var(--panel);border:1px solid var(--line);
     border-radius:12px;padding:14px 16px}
@@ -598,6 +623,26 @@
   <div class="box">
     <div class="spin"></div>
     <div class="txt" id="loadingTxt">正在处理…</div>
+  </div>
+</div>
+
+<!-- 本地留档加载确认：本次品种默认勾选，历史里的其他品种可点选加入 -->
+<div class="arc-mask hidden" id="arcMask">
+  <div class="arc-box" role="dialog" aria-modal="true" aria-labelledby="arcTitle">
+    <div class="arc-head">
+      <b id="arcTitle">是否加载历史数据？</b>
+      <div class="arc-sub" id="arcSub"></div>
+    </div>
+    <div class="arc-body">
+      <div class="arc-sec" id="arcSecNow">本次上传</div>
+      <div class="arc-list" id="arcListNow"></div>
+      <div class="arc-sec" id="arcSecOld" style="margin-top:14px">本地留档中的其他品种</div>
+      <div class="arc-list" id="arcListOld"></div>
+    </div>
+    <div class="arc-foot">
+      <button class="btn ghost" id="arcSkip" type="button">不用历史</button>
+      <button class="btn" id="arcOk" type="button">加载所选</button>
+    </div>
   </div>
 </div>
 

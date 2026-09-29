@@ -27,14 +27,20 @@ console.log("\n===== [A] 品种筛选默认态 = 空 Set = 不筛选 =====");
 console.log("\n===== [B] 分析新数据后，品种筛选会被重置吗 =====");
 {
   const src = fs.readFileSync(path.join(R, "app.js"), "utf8");
-  // 找 #startBtn 的 handler 段落
+  // ⚠️ app.js 是 CRLF 换行：不能用 'renderPendingList();\n}' 定位（永远匹配不到，
+  //    slice 会退化到固定长度、把最后一行截断）。改用「下一个段落起点」定位。
   const iBtn = src.indexOf('$("#startBtn").onclick');
-  const iEnd = src.indexOf("renderPendingList();\n}", iBtn);
-  const seg = src.slice(iBtn, iEnd > 0 ? iEnd : iBtn + 3000);
-  const resetsProducts = /state\.products\.clear\(\)/.test(seg);
-  ok(!resetsProducts,
-    "【现状】分析新数据时**不会**重置品种筛选（用户上次勾的品种会留到下一次分析）");
-  console.log("       ↑ 这一条是「需求 3」要改的点：新上传时应把品种筛选重置为「全部」或「只勾本次上传的品种」");
+  const iNext = src.indexOf("/* ============ 本地留档（OPFS）============");
+  const iEnd = iNext > iBtn ? iNext : src.indexOf("renderPendingList();", iBtn + 500);
+  const seg = src.slice(iBtn, iEnd);
+  ok(seg.length > 2000, "成功截取到分析流程段落（长度 " + seg.length + "，未被截断）");
+  // 用纯字符串匹配，避免正则转义陷阱
+  const WANT = "state.products = picked.length ? new Set(picked) : new Set();";
+  ok(seg.indexOf(WANT) >= 0,
+    "✅ 【已修复】分析后重置品种筛选：勾了历史品种→设为已加载品种；未勾→清空（=全部）");
+  console.log("       ↑ 这修掉了「上次勾了 A，这次上传 C 被挡住、看起来没数据」的问题");
+  ok(seg.indexOf("state.products.clear()") === -1,
+    "不再使用 clear()（改为整体赋值，语义更明确）");
 }
 
 console.log("\n===== [C] 品种过滤的实际行为（构造数据实测）=====");

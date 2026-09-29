@@ -230,8 +230,57 @@ repurchase_dashboard/
 | 其中跨文件重复组 | **20,710（96.5%）** |
 | 同一文件内重复组 | 762 |
 
-**验证**：`node tests/_test_dedup.js`（85 项断言）；
+**验证**：`node tests/_test_dedup.js`（87 项断言）；
 真实浏览器端到端 `node tests/_cdp_dedup.mjs "<A.xlsx>" "<B.xlsx>"`。
+
+#### 4.2.2 本地留档：下次不用重新上传（2026-09-24 新增）
+
+反复导出销售明细很麻烦。看板把**本次分析用到的销售明细按品种存进浏览器本地**，
+下次只上传增量文件即可，历史自动带出来。
+
+| 项 | 定稿口径 |
+|---|---|
+| 存储方式 | 浏览器 **OPFS**（Origin Private File System），按品种分目录 |
+| 目录结构 | `<origin>/留档/销售/<品种>/sales.json`，内容 `{version:1, product, updated_at, records:[...]}` |
+| 触发弹窗 | **本次品种在本地有历史**才弹；本次品种全无历史 → **不弹**，直接只算本次 |
+| 弹窗内容 | 本次上传的品种（**默认勾选**）+ 留档里的其他品种（**默认不勾，可点选加入**） |
+| 历史带什么 | **只带销售明细**；随访与用药周期**只用本次上传的** |
+| 销售合并 | 历史 + 本次合并后**统一走去重**（重叠行自动去除） |
+| 品种筛选 | 勾了历史品种 → 筛选设为「已加载的品种」；未勾 → 清空（顺带修掉上次筛选残留） |
+| 数据被清 | 读取失败 / 被回收 → **静默降级为「无历史」**，不打扰用户 |
+| 额外提示 | **不加**（用户两次明确要求） |
+| 回写时机 | 分析末尾整品种覆盖写；**只写本次出现的品种**，不删其他品种的留档 |
+
+代码：`pipeline.js` 末段（`archiveSupported` / `loadArchiveSales` / `saveArchiveSales` /
+`listArchiveProducts` / `removeArchiveSales` / `loadArchiveSalesFor`）；
+`app.js` 的 `#startBtn` 流程 + `saveArchiveByProduct()` / `askArchiveProducts()`。
+
+**界面表现**：弹窗标题 `是否加载【品种A、品种B】的历史数据？`，分「本次上传」与
+「本地留档中的其他品种」两区，各条目显示`本次上传`标签与`留档 N 条 · 更新时间`；
+底部两个按钮「不用历史」/「加载所选」。分析完成后顶部 `#dataInfo` 追加 `· 已并入 N 个品种历史`。
+
+**实测**（真实 Chrome / 真实 OPFS / 真实 xlsx）：
+
+| 轮次 | 操作 | 结果 |
+|---|---|---|
+| 1 | 首次上传 A（百泽安 95 条 → 93 条） | 不弹窗；写出留档 `百泽安/sales.json` 93 条 |
+| 2 | 刷新页面 → 再传 A | 弹窗出现，A 默认勾选；点「加载所选」→ `archive:["百泽安"]`、`total 188 → kept 93` |
+| 3 | 刷新 → 再传 A → 点「不用历史」 | `archive:[]`、`kept 93`（与首次一致，历史确实没并进来） |
+| 4 | 刷新 → 传 B（百悦泽，留档里没有） | **不弹窗**（本次品种全无历史）；A 的留档仍在（1 → 2 个品种） |
+
+**两处关键注意**：
+
+- ⚠️ **存储按 origin 隔离**：`file://`（双击 index.html）与 `https://`（GitHub Pages）
+  是**两套独立存储，互不连通**。要持续用留档请固定一种打开方式。
+- ⚠️ **配额是 best-effort**：实测单 origin 配额约 10 GB，但 `navigator.storage.persist()`
+  返回 `false` —— 磁盘紧张时浏览器有权清理。**留档只当便捷缓存，不是唯一数据源**。
+
+**一个已修的真实缺陷**：接入点原写 `if (P.archiveSupported)` —— `archiveSupported` 是**函数**
+（恒真），等于守卫失效。已改为 `P.archiveSupported()`，并补了静态断言防回归。
+
+**验证**：`node tests/_test_archive.js`（81 项断言：假 OPFS 读写往返 / 无留档静默 /
+品种名消毒 / 空 products 零副作用 / 整品种覆盖 / JSON 损坏降级 / 无 OPFS 全降级 / 接入点静态断言）；
+真实浏览器端到端 `node tests/_cdp_archive.mjs "<A.xlsx>" "<B.xlsx>"`（32 项断言，全通过）。
 
 > **医院 / 科室 / 医生 的取值口径（2026-09-24 定）**
 >
@@ -709,6 +758,8 @@ node tests/_test_snapshot_scope.js    # 快照品种范围 / 去小结 / 隐藏�
 node tests/_test_snapshot_e2e_dom.js  # 真实 DOM 端到端：生成快照 → 打开快照
 node tests/_test_patient_key.js       # 患者唯一键 = 姓名+电话（重名/同号不误合并、重名不串随访）
 node tests/_test_cycleedit_clip.js    # 列表内改周期（优先级链/患者×品种粒度/清空恢复）+ 长文本截断样式
+node tests/_test_dedup.js             # 销售明细自动去重（键构造/五要素任一不同不误删/无票全留/保留优先）
+node tests/_test_archive.js           # 本地留档 OPFS（假 OPFS 读写往返 + 接入点静态断言）
 # 其余同理，全部跑一遍：
 for f in tests/_test_*.js; do node "$f" || echo "FAIL $f"; done
 ```
@@ -723,6 +774,13 @@ node tests/_geom_run.mjs
 node tests/_mk_probe_page.js
 node tests/_cdp_run.mjs "file:///<绝对路径>/tests/_probe_page.html" \
   "(async()=>{for(let i=0;i<80;i++){if(window.__DONE__)break;await new Promise(r=>setTimeout(r,300));}return window.__RESULT__;})()"
+
+# 去重端到端：两份含重叠数据的真实销售明细 → 提示条与数字
+node tests/_cdp_dedup.mjs "<A.xlsx>" "<B.xlsx>"
+
+# 留档端到端：OPFS 写入 → 刷新仍存活 → 弹窗勾选/不勾 → 不误删其他品种
+#   ⚠️ 需 A 与 B 品种不相交（如 A=百泽安、B=百悦泽）
+node tests/_cdp_archive.mjs "<A.xlsx>" "<B.xlsx>"
 ```
 
 > `ws` 不在本项目内，用 `NODE_PATH` 指向装了它的 `node_modules` 再跑。
@@ -732,15 +790,16 @@ node tests/_cdp_run.mjs "file:///<绝对路径>/tests/_probe_page.html" \
 > ⚠️ 探针页必须基于**真 `index.html`** 派生：手写精简 DOM 会因 app.js 顶层 `$("#x").onclick = …`
 > 取到 null 抛错、整个 IIFE 中断，`window.AppCore` 不会挂载（mapping/pipeline 却能挂上，容易误判）。
 
-**当前状态**：`tests/` 下共 **33 个脚本**（23 个 `_test_*.js` 用例 + 1 个 `_verify_*.js` 核验 + 4 个 `_diag_*.js` 诊断
+**当前状态**：`tests/` 下共 **35 个脚本**（25 个 `_test_*.js` 用例 + 1 个 `_verify_*.js` 核验 + 4 个 `_diag_*.js` 诊断
 + 5 个浏览器/CDP 工具）。其中 **5 个依赖本机样例 Excel**（`_test_detect` / `_test_dyncycle` / `_test_e2e` /
 `_test_render` / `_test_snapshot_filter`），缺文件时自动打印"跳过"并以 0 退出。
-**全量回归：23 个脚本全部 exit=0，共 439 项断言通过、0 失败**（2026-09-29）。
-浏览器端：几何/交互验收 **22/22**、快照往返 **6/6**。
+**全量回归：25 个脚本全部 exit=0，0 项失败**（2026-09-29）。
+浏览器端：几何/交互验收 **22/22**、快照往返 **6/6**、**留档端到端 32/32**。
 
 **改动后的最低要求**：改到判定逻辑，至少跑 `_test_logic` / `_test_qtycycle` / `_test_summary`；
 改到导出，跑 `_test_export`；改到患者归并口径，跑 `_test_patient_key`；
-改到列表排版或周期列交互，跑 `_test_cycleedit_clip` + `_geom_run.mjs`。
+改到列表排版或周期列交互，跑 `_test_cycleedit_clip` + `_geom_run.mjs`；
+改到去重口径，跑 `_test_dedup`；改到本地留档，跑 `_test_archive` + `_cdp_archive.mjs`。
 
 **诊断辅助脚本**（不属于回归用例，按需手动跑）：
 
@@ -761,6 +820,8 @@ node tests/_diag_data.js          # 看上传文件被识别成什么表、各�
 | 快照 | `_test_snapshot` / `_test_snapshot_scope` / `_test_snapshot_e2e_dom` |
 | 患者归并口径 | `_test_patient_key` |
 | 列表排版 / 周期列交互 | `_test_cycleedit_clip` + `_geom_run.mjs` |
+| 去重口径 | `_test_dedup` |
+| 本地留档 | `_test_archive` + `_cdp_archive.mjs`（需真实浏览器） |
 | 任何 `app.js` / `mapping.js` / `pipeline.js` 改动 | **必须重跑 `build.py` 与 `build.py --single`**，否则产物与源码不同步 |
 
 ---
@@ -827,6 +888,9 @@ curl -X POST -H "Authorization: token $TOKEN" \
 | **大文件性能** | 纯前端解析，数万行量级没问题；超大文件（十万行+）首次解析会明显卡顿 |
 | **快照是只读的** | 快照内不能继续编辑或重新分析 |
 | **回传表必须明文** | 见第 8 节，这决定了它只能内部流转 |
+| **本地留档按 origin 隔离** | `file://` 与 `https://` 是两套独立存储，互不连通。改打开方式会「看不到历史」，不是数据丢了 |
+| **本地留档是 best-effort** | 浏览器有权在磁盘紧张时清理（`persist()` 返回 false）。**当便捷缓存用，不当唯一数据源** |
+| **留档已按品种去重后覆盖** | 只上传某品种的**部分**数据时，该品种的留档会被这轮结果覆盖（口径：留档是「已合并去重的全量」，不做增量合并）。请确保本轮的该品种数据是完整的 |
 
 ---
 
@@ -854,7 +918,20 @@ curl -X POST -H "Authorization: token $TOKEN" \
 默认单行截断（不撑开行高）。**鼠标悬停看全文**，或**点击该格展开/再点收起**。若嫌某列太窄，
 用「表头显隐」调整可见列——列宽是按百分比自适应容器分配的。
 
-**Q：改了代码但页面没变化？**
+**Q：上次上传过 A，这次只传 B，为什么没弹「加载历史」？**
+弹窗的触发条件是「**本次上传的品种**在本地有历史」。本次只传 B，而 B 从未上传过 → 按设计**不弹**，
+直接只算本次（同时也避免把 A 的数据塞进来污染你的视图）。想带上 A，把 A 的文件也一起上传即可。
+
+**Q：双击 index.html 上传过数据，改用在线地址打开后历史没了？**
+正常。浏览器的 OPFS **按 origin 隔离**：`file://` 与 `https://` 是两套独立存储，互不连通。
+想持续用留档，固定一种打开方式。
+
+**Q：留档会不会被浏览器清掉？**
+可能。`navigator.storage.persist()` 在浏览器里通常返回 `false`，属于 best-effort 存储，
+磁盘紧张时可能被回收。**请把留档当便捷缓存，不要当唯一数据源**——原始报表该留还得留。
+真被清了也不会报错，只会静默当「无历史」处理。
+
+**Q：我改了代码但页面没变化？**
 忘了跑 `python build.py`。`index.html` 是产物，直接改源码不生效。给离线分发用的单文件版还要跑 `python build.py --single`。
 
 **Q：导出的 Excel 列不对 / 少了列？**

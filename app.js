@@ -1450,27 +1450,63 @@ $("#startBtn").onclick = async () => {
   try {
     const res = await P.processFiles(files);
     if (!res.sales.length) { alert("未识别到销售明细数据：请确认上传了含「销售时间/商品名称/会员姓名」列的销售报表。"); return; }
+
+    // 本次上传涉及的品种（去重前先算，用于决定要不要问「加载历史」以及问哪些）
+    const nowProducts = [...new Set(res.sales.map(s => s.product).filter(Boolean))];
+
+    // ---- 本地留档（OPFS）：本次品种在本地有历史时才弹窗询问是否加载 ----
+    // 口径（已与用户确认）：
+    //   · 只带**销售明细**；随访与周期只用本次上传的（它们带时效性，本次结论优先）
+    //   · 本次品种默认勾选；历史里的其他品种默认不勾，可点选加入当次加载
+    //   · 只要**本次任一品种**在本地有历史就弹；本次品种全无历史 → 不弹，直接只算本次
+    //   · 读取失败 / 数据被浏览器回收 → 静默当「无历史」，不打扰用户
+    let picked = [];
+    if (P.archiveSupported()) {
+      const archiveAll = await P.listArchiveProducts();
+      const archiveNames = new Set(archiveAll.map(a => a.product));
+      const nowHit = nowProducts.filter(p => archiveNames.has(p));
+      if (nowHit.length) picked = await askArchiveProducts(nowProducts, archiveAll, nowHit);
+    }
+
+    // 取出所选品种的历史销售明细，与本次合并后**统一走去重**
+    // （历史与本次重叠的行会被 dedupSales 自动去掉，剩下的正好是两边的不重复全集）
+    let allSales = res.sales;
+    if (picked.length) {
+      const arc = await P.loadArchiveSalesFor(picked);
+      if (arc.records.length) allSales = res.sales.concat(arc.records);
+    }
+
     // 跨文件自动去重：用户反复上传重叠的销售明细时，同一业务事实会被记多遍。
     // 口径与保留规则见 pipeline.js 的 dedupSales 注释。去重结果同时存进 STORE 供提示条展示详情。
-    const dd = P.dedupSales(res.sales);
+    const dd = P.dedupSales(allSales);
     STORE.dedup = {
       total: dd.total, kept: dd.records.length, removed: dd.removedRows,
       groups: dd.groups, keptNoTicket: dd.keptNoTicket, removedRows: dd.removed,
+      archive: picked,
     };
     STORE.sales = dd.records;
     STORE.followups = res.followups;
     STORE.cycles = res.cycles;
+
+    // 回写留档：按品种切分、整品种覆盖。写的是「历史+本次合并去重后」的完整集合，
+    // 因此下次再读就是全量，不必重复上传。
+    if (P.archiveSupported() && dd.records.length) await saveArchiveByProduct(dd.records);
+
     // 回传数据回流（上一轮导出的「随访回传表」在本轮自动接续）
     const cb = applyCallbackRecords(res.followups);
     $("#board").classList.remove("hidden");
     $("#dataInfo").textContent =
       `销售明细 ${dd.records.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人` +
+      (picked.length ? ` · 已并入 ${picked.length} 个品种历史` : "") +
       (cb.nNote || cb.nReason ? ` · 已接续回传 ${cb.nNote} 条备注 / ${cb.nReason} 条原因` : "");
     renderDedupNotice();
     // 按数据实际出现的品种动态维护标准周期（内置值优先，新品种默认 30 天）
     const products = [...new Set(dd.records.map(s => s.product).filter(Boolean))];
     ensureStdCycles(products);
     renderCycleInputs();
+    // 品种筛选：勾了历史其他品种时设成「已加载的品种」，让当前看图范围可见；
+    // 未勾历史时清空（=全部），顺带避免上一次的筛选残留挡住本次数据。
+    state.products = picked.length ? new Set(picked) : new Set();
     // 默认不设应购日期范围（=全部显示）；用户选择范围后表单按范围裁剪
     state.page = 1;
     await refresh();
@@ -1482,6 +1518,95 @@ $("#startBtn").onclick = async () => {
   }
 };
 renderPendingList();
+
+/* ============ 本地留档（OPFS）============ */
+
+// 把去重后的销售记录按品种切分，整品种覆盖写回留档。
+// 只写「本次数据里出现的品种」—— 未出现在本次数据里的品种，其历史留档原样保留
+//（否则用户只上传 A，会把 B 的留档误删）。
+async function saveArchiveByProduct(records) {
+  const byProd = new Map();
+  for (const r of records) {
+    if (!r || !r.product) continue;
+    if (!byProd.has(r.product)) byProd.set(r.product, []);
+    byProd.get(r.product).push(r);
+  }
+  for (const [prod, list] of byProd) {
+    await P.saveArchiveSales(prod, list);
+  }
+}
+
+// 弹窗：问用户是否加载历史。返回被勾选的品种数组（空数组 = 不加载历史）。
+//   nowProducts —— 本次上传涉及的品种
+//   archiveAll  —— 本地留档全部品种 [{product,count,updated_at}]
+//   nowHit      —— 本次品种中「本地有历史」的那些（默认勾选）
+function askArchiveProducts(nowProducts, archiveAll, nowHit) {
+  return new Promise(resolve => {
+    const mask = $("#arcMask");
+    const hitSet = new Set(nowHit);
+    const metaOf = new Map(archiveAll.map(a => [a.product, a]));
+    const checked = new Set(nowHit); // 默认勾选本次品种中本地有历史的那些
+
+    $("#arcTitle").textContent = `是否加载【${nowHit.join("、")}】的历史数据？`;
+    $("#arcSub").innerHTML =
+      "本地留档中已有这些品种的购药记录。勾选后会与本次上传合并计算（重复记录自动去除）；" +
+      "随访与用药周期仍以本次上传为准。";
+
+    // 上半：本次上传的品种（有历史的可勾，默认勾上）
+    const nowList = $("#arcListNow");
+    const nowHas = nowProducts.filter(p => hitSet.has(p));
+    if (nowHas.length) {
+      nowList.innerHTML = nowHas.map(p => {
+        const m = metaOf.get(p) || {};
+        return `<label class="arc-item"><input type="checkbox" data-prod="${esc(p)}" checked>` +
+          `<span class="arc-name">${esc(p)}</span>` +
+          `<span class="arc-tag">本次上传</span>` +
+          `<span class="arc-meta">留档 ${m.count || 0} 条 · ${esc(m.updated_at || "")}</span></label>`;
+      }).join("");
+      $("#arcSecNow").classList.remove("hidden");
+      nowList.classList.remove("hidden");
+    } else {
+      $("#arcSecNow").classList.add("hidden");
+      nowList.classList.add("hidden");
+      nowList.innerHTML = "";
+    }
+
+    // 下半：历史里的其他品种（默认不勾，用户可点选加入）
+    const olds = archiveAll.filter(a => !hitSet.has(a.product));
+    const oldList = $("#arcListOld");
+    if (olds.length) {
+      oldList.innerHTML = olds.map(a =>
+        `<label class="arc-item"><input type="checkbox" data-prod="${esc(a.product)}">` +
+        `<span class="arc-name">${esc(a.product)}</span>` +
+        `<span class="arc-meta">留档 ${a.count} 条 · ${esc(a.updated_at || "")}</span></label>`
+      ).join("");
+      $("#arcSecOld").classList.remove("hidden");
+      oldList.classList.remove("hidden");
+    } else {
+      $("#arcSecOld").classList.add("hidden");
+      oldList.classList.add("hidden");
+      oldList.innerHTML = "";
+    }
+
+    // 勾选态：本次区与历史区共用同一个 Set
+    mask.querySelectorAll("input[type=checkbox][data-prod]").forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) checked.add(cb.dataset.prod);
+        else checked.delete(cb.dataset.prod);
+      };
+    });
+
+    const close = (result) => {
+      mask.classList.add("hidden");
+      $("#arcOk").onclick = null;
+      $("#arcSkip").onclick = null;
+      resolve(result);
+    };
+    $("#arcOk").onclick = () => close(Array.from(checked));
+    $("#arcSkip").onclick = () => close([]);
+    mask.classList.remove("hidden");
+  });
+}
 
 /* ============ 销售明细去重提示条 ============ */
 // 目的：让用户知道「有重复被自动去掉了」并且**能核对**，而不是静默改数。
