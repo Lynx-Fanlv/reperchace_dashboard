@@ -52,6 +52,7 @@ function reasonLabel(tree, key) {
 }
 
 // 名单表列（note = 用户手动填写的跟进备注列，随快照保存）
+// 表头文字尽量精简（≤4 字）：列宽较窄时表头会按字换行，长表头会把表头行撑成竖排
 const LIST_COLS = [
   ["patient_name", "患者"],
   ["phone", "电话"],
@@ -61,11 +62,11 @@ const LIST_COLS = [
   ["hospital", "医院"],
   ["pharmacy", "药房"],
   ["last_purchase", "最近购药"],
-  ["qty", "购药数量"],
-  ["cycle_days", "周期(天)"],
-  ["due_date", "应购药日期"],
-  ["days_to_due", "距今天数"],
-  ["fu_time", "匹配随访时间"],
+  ["qty", "数量"],
+  ["cycle_days", "周期"],
+  ["due_date", "应购药日"],
+  ["days_to_due", "距今"],
+  ["fu_time", "随访时间"],
   ["fu_type", "随访类型"],
   ["executor", "随访人"],
   ["status", "状态"],
@@ -74,7 +75,14 @@ const LIST_COLS = [
   ["note", "跟进备注"],
 ];
 
-const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, reasonOverrides: {} };
+// 周期覆盖键：患者（姓名+电话）× 品种。与备注/原因的 noteKey 同构，但存独立，
+// 因为「备注」是跟进记录、「周期」是业务参数，混存会让清空备注时误删周期设置。
+// ⚠ patientKey 用 \u0000 作分隔符，而 \u0000 在 HTML 属性中非法：写进 data-key 再读回会被
+//   浏览器替换为 U+FFFD，键就对不上。故周期单元格不经 DOM 传键 —— 改由「行索引」回查
+//   DATA.rows 现算（见 renderTable 的 .cycle-edit 绑定），从根上避开该陷阱。
+function cycleOverrideKey(r) { return (r._key || "") + "::" + r.product; }
+
+const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, reasonOverrides: {}, cycleOverrides: {} };
 let SNAP_MODE = false;
 let SNAP_BASE = null; // 快照全量行基准（不可变，供快照模式筛选；避免 DATA.rows 被覆盖后累积丢失）
 let GLOBAL_BY_PHARMACY = {}; // 药房多选面板计数：在该药房购过药的行数（基于全量明细，不受药房筛选影响）
@@ -364,7 +372,13 @@ function buildRows() {
       bp.purchases = normalizePurchases(bp.purchases);
       const lastRec = bp.purchases[bp.purchases.length - 1];
       const lastPurchase = lastRec.date;
-      const cycle = cycles[p.name] || state.stdCycle[fam] || 30;
+      // 周期取值优先级：① 列表内人工为该患者单独设置（STORE.cycleOverrides）→ ② 周期表 → ③ 品种标准周期 → 30
+      // ①的键是「姓名+电话 × 品种」，比②（仅姓名）更精确，且只在用户显式改过时才存在。
+      const ovKey = k + "::" + fam;
+      const ovDays = STORE.cycleOverrides[ovKey];
+      const cycleBase = cycles[p.name] || state.stdCycle[fam] || 30;
+      const cycleOver = (Number.isFinite(ovDays) && ovDays > 0) ? ovDays : null;
+      const cycle = cycleOver != null ? cycleOver : cycleBase;
       // 周视图状态判定基准：所选周 W（起止由「周截止日」决定）
       //  当周 [W.start, W.end] 内有购药记录 → 应回购·应回已回（购药事实最优先）
       //  应购日 < W.start → 已逾期；应购日 ∈ W → 应回购；应购日 > W.end → 未到期
@@ -462,6 +476,9 @@ function buildRows() {
         member_id: bp.member_id || "", // 会员号（脱敏方式「仅会员号」时患者列显示）
         department: bp.department || "", // 科室（销售底表「处方科室」）
         last_purchase: lastPurchase, qty: lastRec.qty, cycle_days: cycle,
+        cycle_override: cycleOver,      // 人工设置的周期（null=未设置）；用于列上标「已单独设置」
+        cycle_base: cycleBase,          // 未覆盖时本会采用的周期（周期表 / 标准周期）；用于列上提示与「清空即恢复」
+        cycle_source: cycleOver != null ? "override" : "default",
         // 应回已回行：due_date 显示「预判应购日」（不呈现下次应购时间）；无预判基准显示空（渲染为 —）
         due_date: rowDue,
         due_in_week: dueInWeek, // 应购药日期落在所选周 → 优先展示并标底色
@@ -672,6 +689,23 @@ const visibleCols = () => LIST_COLS.filter(([key]) => {
   return !state.hiddenCols.has(key);
 });
 
+// 列宽档位：按列 key 指定宽度类名（与 index.template.html 的 col.c-* 对应）。
+// 未列出的列不写宽度 —— 固定布局下这些列平分剩余宽度（不会出现横向溢出）。
+const COL_WIDTH = {
+  qty: "c-narrow", cycle_days: "c-narrow", days_to_due: "c-narrow",
+  phone: "c-tel",
+  last_purchase: "c-date", due_date: "c-date", fu_time: "c-date",
+  product: "c-prod",
+  hospital: "c-wide", fu_type: "c-wide",
+  note: "c-note",
+};
+const COL_WIDTH_MID = new Set(["patient_name", "physician", "department", "pharmacy", "status", "reason", "executor", "fu_signal"]);
+function colClass(key) {
+  if (COL_WIDTH[key]) return COL_WIDTH[key];
+  if (COL_WIDTH_MID.has(key)) return "c-mid";
+  return "";
+}
+
 function renderTable() {
   const cols = visibleCols();
   const total = DATA.rows.length;
@@ -679,6 +713,12 @@ function renderTable() {
   if (state.page > pages) state.page = pages;
   const start = (state.page - 1) * state.pageSize;
   const rows = DATA.rows.slice(start, start + state.pageSize);
+  // 列宽随「列显隐」动态下发：用 colgroup 而非在行内写宽度，隐藏列时列宽不会错位
+  const cg = $("#colgroup");
+  if (cg) cg.innerHTML = cols.map(([key]) => {
+    const c = colClass(key);
+    return c ? `<col class="${c}">` : "<col>";
+  }).join("");
   $("#thead").innerHTML = cols.map(([, label]) => `<th>${label}</th>`).join("");
   const tb = $("#tbody");
   if (!total) { tb.innerHTML = ""; $("#empty").classList.remove("hidden"); }
@@ -736,6 +776,54 @@ function renderTable() {
       setTimeout(() => sel.focus(), 0); // 延后聚焦，避免点击事件未完成时 select 失焦
     });
   });
+  // 周期列：点击 → 行内改为数字输入框，回车/失焦即保存（空值 = 清除该患者设置，恢复周期表/标准周期）
+  // 键不通过 DOM 属性传递（patientKey 含 \u0000，在 HTML 属性里会被替换为 U+FFFD 而对不上），
+  // 改为用 tr 上的行索引回查 DATA.rows 现算。
+  tb.querySelectorAll("tr.data-row").forEach(tr => {
+    const sp = tr.querySelector("span.cycle-edit");
+    if (!sp) return;
+    sp.addEventListener("click", e => {
+      e.stopPropagation();
+      if (SNAP_MODE) return;
+      const row = DATA.rows[+tr.dataset.idx];
+      if (!row) return;
+      const td = sp.parentNode;
+      if (!td || td.querySelector("input.cycle-input")) return;
+      const key = cycleOverrideKey(row);
+      const cur = String(row.cycle_days == null ? "" : row.cycle_days);
+      const tblWrap = document.querySelector(".tbl-wrap");
+      const scrollTop = tblWrap ? tblWrap.scrollTop : 0;
+      const baseTxt = row.cycle_base == null ? "标准周期" : ("周期表/标准周期 " + row.cycle_base + " 天");
+      td.innerHTML = `<input class="cycle-input" type="number" min="1" max="365" value="${esc(cur)}" ` +
+        `title="输入该患者的用药周期天数（1~365）；清空后回车 = 恢复为${esc(baseTxt)}">` +
+        `<div class="ci-tip">回车保存 · Esc 取消 · 清空则恢复默认</div>`;
+      const inp = td.querySelector("input.cycle-input");
+      let closed = false;
+      const finish = (save) => {
+        if (closed) return;
+        closed = true;
+        document.removeEventListener("mousedown", onDoc);
+        if (save) {
+          const raw = String(inp.value).trim();
+          if (raw === "") {
+            delete STORE.cycleOverrides[key];       // 清空 = 恢复周期表 / 标准周期
+          } else {
+            const n = parseInt(raw, 10);
+            if (Number.isFinite(n) && n > 0) STORE.cycleOverrides[key] = Math.min(365, n);
+          }
+        }
+        refresh(); // 重算应购日期与状态
+        setTimeout(() => { const w2 = document.querySelector(".tbl-wrap"); if (w2) w2.scrollTop = scrollTop; }, 0);
+      };
+      const onDoc = (ev) => { if (!td.contains(ev.target)) finish(true); };
+      document.addEventListener("mousedown", onDoc);
+      inp.addEventListener("keydown", ev => {
+        if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+        if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+      });
+      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    });
+  });
   tb.querySelectorAll("tr.data-row").forEach(tr => {
     tr.onclick = () => {
       const r = DATA.rows[+tr.dataset.idx];
@@ -744,6 +832,15 @@ function renderTable() {
       tb.querySelectorAll("tr.expand-row").forEach(x => x.remove());
       tr.insertAdjacentHTML("afterend", expandHtml(r, cols.length));
     };
+  });
+  // 长文本单元格：点击就地展开/收起全文（不触发行展开）
+  tb.querySelectorAll("tr.data-row .clip-x").forEach(el => {
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      const open = el.classList.toggle("open");
+      if (open) el.classList.remove("clip1");
+      else el.classList.add("clip1");
+    });
   });
   renderPagination(total);
   // 表格滚动条回到顶端（不滚动页面，避免用户被带回顶部上传区）
@@ -755,17 +852,27 @@ function rowHtml(r, idx, cols) {
   const days = r.days_to_due;
   const isRepur = r.repur_part === "应回已回";
   // 应回已回行：应购药日期列显示「预判应购日」+ 提前/延后标注（无预判基准显示 —）
-  let dueTxt = r.due_date || "";
+  // 日期与小标包进 .due-cell（flex，不许换行），窄列下不会各占一行把行高翻倍。
+  let dueDateTxt = r.due_date || "";
+  let dueSub = "";
   if (isRepur) {
-    if (r.due_offset == null) dueTxt = "<span class=\"muted\">—</span>";
-    else if (r.due_offset > 0) dueTxt += `<span class="sub over">延期${r.due_offset}天</span>`;
-    else if (r.due_offset < 0) dueTxt += `<span class="sub due">提前${-r.due_offset}天</span>`;
-    else dueTxt += `<span class="sub due">按时</span>`;
-  } else if (days > 0) dueTxt += `<span class="sub due">还有${days}天</span>`;
-  else if (days === 0) dueTxt += `<span class="sub due today">今天</span>`;
-  else if (days < 0) dueTxt += `<span class="sub over">逾期${-days}天</span>`;
+    if (r.due_offset == null) { dueDateTxt = ""; dueSub = '<span class="sub">—</span>'; }
+    else if (r.due_offset > 0) dueSub = `<span class="sub over">延期${r.due_offset}天</span>`;
+    else if (r.due_offset < 0) dueSub = `<span class="sub due">提前${-r.due_offset}天</span>`;
+    else dueSub = `<span class="sub due">按时</span>`;
+  } else if (days > 0) dueSub = `<span class="sub due">还有${days}天</span>`;
+  else if (days === 0) dueSub = `<span class="sub due today">今天</span>`;
+  else if (days < 0) dueSub = `<span class="sub over">逾期${-days}天</span>`;
+  const dueTxt = `<div class="due-cell">` +
+    (dueDateTxt ? `<span class="d-date">${esc(dueDateTxt)}</span>` : "") + dueSub + `</div>`;
   // 跟进备注：仅「应回购 / 已逾期」显示填写窗口，其余大类显示 —
   const canNote = r.status === "应回购" || r.status === "已逾期";
+  // 长文本单元格：单行截断 + 悬停显示全文 + 点击展开（td 上加 title 会与内部元素重复，故统一挂在此包装上）
+  const clip = (txt, cls) => {
+    const s = String(txt == null ? "" : txt);
+    if (!s) return "";
+    return `<div class="clip1 clip-x${cls ? " " + cls : ""}" title="${esc(s)}（点击展开全文）">${esc(s)}</div>`;
+  };
   const cells = cols.map(([key]) => {
     if (key === "due_date") return `<td>${dueTxt}</td>`;
     if (key === "days_to_due") {
@@ -800,25 +907,44 @@ function rowHtml(r, idx, cols) {
     if (key === "pharmacy") {
       // 药房列：选中药房筛选时，若该患者已转到其他药房，附小字提示（完整语义见 title）
       const base = esc(r.pharmacy || "");
-      if (!r.pharmacy_note) return `<td><div class="cell-clip">${base}</div></td>`;
+      if (!r.pharmacy_note) return `<td>${clip(r.pharmacy)}</td>`;
       const tip = (r.pharmacy || "") + "｜" + r.pharmacy_note + "（本药房末次购药后患者已转至其他药房购药）";
-      return `<td><div class="cell-clip" title="${esc(tip)}">${base}<span class="ph-note">${esc(r.pharmacy_note)}</span></div></td>`;
+      return `<td><div class="clip1 clip-x" title="${esc(tip)}">${base}<span class="ph-note">${esc(r.pharmacy_note)}</span></div></td>`;
     }
-    if (key === "product") return `<td><span class="tag-prod">${esc(disp(r, key))}</span></td>`;
+    if (key === "cycle_days") {
+      // 周期列：可点击修改该患者在该品种下的用药周期（覆盖周期表与标准周期）。
+      // 不在此挂 data-key —— patientKey 含 \u0000，HTML 属性会被替换为 U+FFFD 导致键失配；
+      // 点击时由 renderTable 用行索引回查 DATA.rows 现算键。
+      const over = r.cycle_source === "override";
+      const ttl = over
+        ? "该患者已单独设置周期，点击可直接修改（清空则恢复为周期表/标准周期" +
+          (r.cycle_base == null ? "" : " " + r.cycle_base + " 天") + "）"
+        : "点击可单独修改该患者的用药周期（优先于周期表与标准周期）";
+      return `<td><span class="cycle-edit${over ? " over" : ""}" ` +
+        `title="${esc(ttl)}">${esc(r.cycle_days)}</span>${over ? '<span class="ce-dot" title="已单独设置"></span>' : ""}</td>`;
+    }
+    if (key === "product") {
+      const s = String(disp(r, key) || "");
+      return `<td><span class="tag-prod" title="${esc(s)}">${esc(s)}</span></td>`;
+    }
     if (key === "note") {
       if (!canNote) return `<td><span class="muted">—</span></td>`;
       const k = noteKey(r);
       const v = STORE.notes[k] || "";
       return `<td><input class="note-input" data-key="${esc(k)}" value="${esc(v)}" placeholder="填写跟进备注" ${SNAP_MODE ? "disabled" : ""}></td>`;
     }
-    if (key === "fu_type") return `<td><div class="cell-clip">${esc(disp(r, key))}</div></td>`;
+    if (key === "fu_type") return `<td><div class="clip2">${esc(disp(r, key))}</div></td>`;
     if (key === "fu_signal") {
       const txt = disp(r, key);
       if (!txt) return `<td><span class="muted">—</span></td>`;
       const kind = ["normal", "nonstd", "dropout"].includes(r.fu_signal_kind) ? r.fu_signal_kind : "unknown";
-      return `<td><div class="cell-clip"><span class="fu-sig ${kind}">${esc(txt)}</span></div></td>`;
+      return `<td><div class="clip2"><span class="fu-sig ${kind}">${esc(txt)}</span></div></td>`;
     }
-    return `<td>${esc(disp(r, key))}</td>`;
+    // 其余文本列（患者/电话/医生/科室/医院/随访人/随访时间等）统一单行截断 + 悬停全文
+    const raw = disp(r, key);
+    const txt = String(raw == null ? "" : raw);
+    if (!txt) return `<td>${txt === "" ? "" : esc(txt)}</td>`;
+    return `<td>${clip(txt)}</td>`;
   }).join("");
   return `<tr class="data-row${r.due_in_week ? " due-in-week" : ""}" data-idx="${idx}">${cells}</tr>`;
 }
@@ -1351,7 +1477,7 @@ renderPendingList();
 
 $("#clearAllBtn").onclick = () => {
   if (!confirm("确定清空全部已加载数据？")) return;
-  STORE.sales = []; STORE.followups = []; STORE.cycles = {}; STORE.files = []; STORE.notes = {}; STORE.reasonOverrides = {};
+  STORE.sales = []; STORE.followups = []; STORE.cycles = {}; STORE.files = []; STORE.notes = {}; STORE.reasonOverrides = {}; STORE.cycleOverrides = {};
   CURRENT = { summary: null }; DATA = { rows: [] };
   $("#board").classList.add("hidden");
 };
@@ -1864,6 +1990,7 @@ async function doSnapshot(desen) {
       .sort((a, b) => a.localeCompare(b, "zh"));
     const snap = {
       desen, rows, notes: STORE.notes, reasonOverrides: STORE.reasonOverrides,
+      cycleOverrides: STORE.cycleOverrides,   // 患者级周期设置（接收方看到的周期与发送方一致）
       summary: buildSummary(rows),   // 统计卡片（状态计数/下钻/原因）在快照内可随筛选重算，保留
       state: {
         weekSel: state.weekSel, refDate: state.refDate, weekEnd: state.weekEnd,
@@ -1957,6 +2084,7 @@ function loadSnapshot(snap) {
   CURRENT.summary = snap.summary || buildSummary(DATA.rows);
   STORE.notes = snap.notes || {};
   STORE.reasonOverrides = snap.reasonOverrides || {};
+  STORE.cycleOverrides = snap.cycleOverrides || {};
   const s = snap.state || {};
   state.weekSel = s.weekSel || "this";
   state.refDate = s.refDate || "";
