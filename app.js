@@ -82,7 +82,7 @@ const LIST_COLS = [
 //   DATA.rows 现算（见 renderTable 的 .cycle-edit 绑定），从根上避开该陷阱。
 function cycleOverrideKey(r) { return (r._key || "") + "::" + r.product; }
 
-const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, reasonOverrides: {}, cycleOverrides: {} };
+const STORE = { sales: [], followups: [], cycles: {}, files: [], seq: 0, notes: {}, reasonOverrides: {}, cycleOverrides: {}, dedup: null };
 let SNAP_MODE = false;
 let SNAP_BASE = null; // 快照全量行基准（不可变，供快照模式筛选；避免 DATA.rows 被覆盖后累积丢失）
 let GLOBAL_BY_PHARMACY = {}; // 药房多选面板计数：在该药房购过药的行数（基于全量明细，不受药房筛选影响）
@@ -1450,17 +1450,25 @@ $("#startBtn").onclick = async () => {
   try {
     const res = await P.processFiles(files);
     if (!res.sales.length) { alert("未识别到销售明细数据：请确认上传了含「销售时间/商品名称/会员姓名」列的销售报表。"); return; }
-    STORE.sales = res.sales;
+    // 跨文件自动去重：用户反复上传重叠的销售明细时，同一业务事实会被记多遍。
+    // 口径与保留规则见 pipeline.js 的 dedupSales 注释。去重结果同时存进 STORE 供提示条展示详情。
+    const dd = P.dedupSales(res.sales);
+    STORE.dedup = {
+      total: dd.total, kept: dd.records.length, removed: dd.removedRows,
+      groups: dd.groups, keptNoTicket: dd.keptNoTicket, removedRows: dd.removed,
+    };
+    STORE.sales = dd.records;
     STORE.followups = res.followups;
     STORE.cycles = res.cycles;
     // 回传数据回流（上一轮导出的「随访回传表」在本轮自动接续）
     const cb = applyCallbackRecords(res.followups);
     $("#board").classList.remove("hidden");
     $("#dataInfo").textContent =
-      `销售明细 ${res.sales.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人` +
+      `销售明细 ${dd.records.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人` +
       (cb.nNote || cb.nReason ? ` · 已接续回传 ${cb.nNote} 条备注 / ${cb.nReason} 条原因` : "");
+    renderDedupNotice();
     // 按数据实际出现的品种动态维护标准周期（内置值优先，新品种默认 30 天）
-    const products = [...new Set(res.sales.map(s => s.product).filter(Boolean))];
+    const products = [...new Set(dd.records.map(s => s.product).filter(Boolean))];
     ensureStdCycles(products);
     renderCycleInputs();
     // 默认不设应购日期范围（=全部显示）；用户选择范围后表单按范围裁剪
@@ -1475,10 +1483,56 @@ $("#startBtn").onclick = async () => {
 };
 renderPendingList();
 
+/* ============ 销售明细去重提示条 ============ */
+// 目的：让用户知道「有重复被自动去掉了」并且**能核对**，而不是静默改数。
+// 默认收起（一行摘要），点「查看详情」展开被移除行的清单。
+function renderDedupNotice() {
+  const box = $("#dedupNotice");
+  if (!box) return;
+  const d = STORE.dedup;
+  if (!d || !d.removed) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  box.classList.remove("hidden");
+  const detailRows = (d.removedRows || []).slice(0, 200).map(r => {
+    const t = r.sales_time || "—";
+    const p = r.product_raw || r.product || "—";
+    const ph = r.pharmacy || "—";
+    const q = r.qty == null ? "—" : r.qty;
+    const tk = r.ticket_no || "—";
+    const src = String(r._row_id || "").split("::")[0] || "—";
+    return `<tr><td>${esc(tk)}</td><td>${esc(t)}</td><td>${esc(p)}</td><td>${esc(ph)}</td><td>${esc(String(q))}</td><td>${esc(src)}</td></tr>`;
+  }).join("");
+  const more = d.removedRows.length > 200
+    ? `<div class="dd-more">仅显示前 200 条（共 ${d.removedRows.length} 条）</div>` : "";
+  box.innerHTML =
+    `<div class="dd-head">` +
+      `<span class="dd-ico">ⓘ</span>` +
+      `<span class="dd-sum">已自动去除 <b>${d.removed}</b> 条重复销售记录` +
+        `${d.groups ? `（${d.groups} 组）` : ""}：${d.total} → ${d.kept}</span>` +
+      `<button class="dd-toggle" id="ddToggle" type="button">查看详情</button>` +
+      `<button class="dd-close" id="ddClose" type="button" title="关闭提示">×</button>` +
+    `</div>` +
+    `<div class="dd-detail hidden" id="ddDetail">` +
+      `<div class="dd-tip">判定依据：<b>小票号 + 销售时间 + 商品名称 + 药房 + 销售数量</b> 全部相同即视为重复，保留信息最全的一条。` +
+        (d.keptNoTicket ? `<br>另有 <b>${d.keptNoTicket}</b> 条没有小票号，未参与去重（一律保留）。` : "") +
+      `</div>` +
+      `<table class="dd-tbl"><thead><tr><th>小票号</th><th>销售时间</th><th>商品名称</th><th>药房</th><th>数量</th><th>来源文件</th></tr></thead>` +
+      `<tbody>${detailRows}</tbody></table>${more}` +
+    `</div>`;
+  const tg = $("#ddToggle"), dt = $("#ddDetail");
+  if (tg && dt) tg.onclick = () => {
+    const open = dt.classList.toggle("hidden");
+    tg.textContent = open ? "查看详情" : "收起详情";
+  };
+  const cl = $("#ddClose");
+  if (cl) cl.onclick = () => { box.classList.add("hidden"); };
+}
+
 $("#clearAllBtn").onclick = () => {
   if (!confirm("确定清空全部已加载数据？")) return;
   STORE.sales = []; STORE.followups = []; STORE.cycles = {}; STORE.files = []; STORE.notes = {}; STORE.reasonOverrides = {}; STORE.cycleOverrides = {};
   CURRENT = { summary: null }; DATA = { rows: [] };
+  STORE.dedup = null;
+  const dn = $("#dedupNotice"); if (dn) { dn.classList.add("hidden"); dn.innerHTML = ""; }
   $("#board").classList.add("hidden");
 };
 
