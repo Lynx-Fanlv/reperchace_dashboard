@@ -31,6 +31,11 @@ def git(args, inp=None, check=True):
 
 
 def main():
+    # 0) 先 fetch，保证 origin/gh-pages 是远端最新
+    #    （本机 gh-pages 本地 ref 常落后于远端，不 fetch 会把新 commit 建在旧 parent 上）
+    print("fetch origin " + BRANCH + " ...")
+    git(["fetch", "origin", BRANCH])
+
     # 1) 新 index.html blob
     blob = git(["hash-object", "-w", FILE]).decode().strip()
     print("新 blob = " + blob)
@@ -57,8 +62,10 @@ def main():
     print("新 tree = " + tree)
 
     parent = git(["rev-parse", "origin/" + BRANCH]).decode().strip()
-    msg = ("同步单文件版（距今列语义着色 + 手动调列宽/行高）\n").encode("utf-8")
-    commit = git(["commit-tree", tree, "-p", parent], inp=msg).decode().strip()
+    # 提交信息可用环境变量覆盖，默认给一条通用说明
+    msg = os.environ.get("GHPAGES_MSG",
+                         "同步单文件版（index.single.html 的构建产物）") + "\n"
+    commit = git(["commit-tree", tree, "-p", parent], inp=msg.encode("utf-8")).decode().strip()
     print("新 commit = " + commit + "  (parent " + parent + ")")
 
     git(["update-ref", "refs/heads/" + BRANCH, commit])
