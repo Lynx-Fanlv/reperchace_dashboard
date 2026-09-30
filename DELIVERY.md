@@ -859,6 +859,9 @@ node tests/_test_archive_merge.js     # 留档写回「只增不删」合并语�
 node tests/_test_archive_mgr.js       # 留档管理器交互（清单渲染/逐品种删除/导出/全部清空/空态）
 node tests/_test_archive_range.js     # 留档「品种名+销售起止」显示名 + 按月分段 + 按段加载
 node tests/_test_days_color.js        # 「距今」列三色着色（单行/色类/CSS 变量/导出字体同源）
+node tests/_test_release_shape.js     # ★ 发布形态哨兵：单文件版必须自包含（不得引用 vendor/、须内联 SheetJS、>1MB）
+                                      #   以及 _ghpages_sync.py 的 SOURCE 必须是 index.single.html
+node tests/_run_all.py                # 一键跑完 tests/_test_*.js 全部用例（Windows 友好，无需 shell 循环）
 # 其余同理，全部跑一遍：
 for f in tests/_test_*.js; do node "$f" || echo "FAIL $f"; done
 ```
@@ -888,6 +891,10 @@ node tests/_cdp_archive.mjs "<A.xlsx>" "<B.xlsx>"
 #   dataInfo 回显「N/M条」→ 管理器显示跨度（含 2 张截图）
 #   ⚠️ 需传入**含 ≥2 个销售月份**的真实销售明细，否则面板只有一段、验不出「按段挑」
 node tests/_cdp_archive_range.mjs "<含多月数据的.xlsx>"
+
+# ★ 线上发布形态验收：直接打开 GitHub Pages，确认 XLSX 已加载、上传能被识别、能出表格
+#   （2026-09-30 线上「全部未识别」故障的回归哨兵，见第 14 节 FAQ）
+node tests/_cdp_live_verify.mjs "<销售明细.xlsx>" "<随访.xls>"
 ```
 
 > `ws` 不在本项目内，用 `NODE_PATH` 指向装了它的 `node_modules` 再跑。
@@ -900,8 +907,9 @@ node tests/_cdp_archive_range.mjs "<含多月数据的.xlsx>"
 **当前状态**：`tests/` 下共 **38 个脚本**（28 个 `_test_*.js` 用例 + 1 个 `_verify_*.js` 核验 + 4 个 `_diag_*.js` 诊断
 + 5 个浏览器/CDP 工具）。其中 **5 个依赖本机样例 Excel**（`_test_detect` / `_test_dyncycle` / `_test_e2e` /
 `_test_render` / `_test_snapshot_filter`），缺文件时自动打印"跳过"并以 0 退出。
-**全量回归：30 个脚本全部 exit=0，0 项失败**（2026-09-29）。
-浏览器端：几何/交互验收 **22/22**、快照往返 **6/6**、留档端到端 **32/32**、留档时间段端到端 **34/34**。
+**全量回归：31 个脚本全部 exit=0，0 项失败**（2026-09-30）。
+浏览器端：几何/交互验收 **22/22**、快照往返 **6/6**、留档端到端 **32/32**、留档时间段端到端 **34/34**、
+**线上发布形态验收通过**（修复后实测：`XLSX: object`、销售/随访均正确识别、表格 53 行）。
 
 **改动后的最低要求**：改到判定逻辑，至少跑 `_test_logic` / `_test_qtycycle` / `_test_summary`；
 改到导出，跑 `_test_export`；改到患者归并口径，跑 `_test_patient_key`；
@@ -936,6 +944,7 @@ node tests/_diag_data.js          # 看上传文件被识别成什么表、各�
 | 列表排版 / 周期列交互 | `_test_cycleedit_clip` + `_geom_run.mjs` |
 | 去重口径 | `_test_dedup` |
 | 本地留档 | `_test_archive` + `_cdp_archive.mjs`（需真实浏览器） |
+| **构建 / 发布 / 两版产物** | `_test_release_shape.js` + `_test_archive_range.js`（`[C]` 段）**必跑**；发布后再跑 `_cdp_live_verify.mjs` 验证线上 |
 | 任何 `app.js` / `mapping.js` / `pipeline.js` 改动 | **必须重跑 `build.py` 与 `build.py --single`**，否则产物与源码不同步 |
 
 ---
@@ -1065,6 +1074,46 @@ curl -X POST -H "Authorization: token $TOKEN" \
 
 **Q：`git revert` / `checkout` 之后文件莫名消失？**
 本机有文件删除拦截层，曾在 `git revert` 后误删整个 `tests/` 目录。**这类 git 操作后务必 `ls` 关键目录**；若真丢了，`git restore --worktree <目录>/` 可全部找回（内容在 git 里没丢）。
+
+**Q：线上页面（GitHub Pages）上传任何文件都显示「未识别」，点开始分析毫无反应，但本地打开正常？**
+⚠️ **这是 2026-09-30 真实发生过的线上故障，排查思路值得记住。**
+根因：`gh-pages` 分支**只有 `index.html` + `README.md`，没有 `vendor/` 目录**。
+若发布时误把**多文件版 `index.html`** 当作单文件版写进 gh-pages，页面里就带着
+
+```html
+<script src="vendor/xlsx.full.min.js">
+<script src="vendor/exceljs.min.js">
+```
+
+这两个引用在 gh-pages 上必然 **404 → `XLSX` 未定义 → `detectTableType` 无法运行 → 所有文件都被标「未识别」**。
+
+**为什么难查**：页面本身看着完全正常（HTML / CSS / 业务逻辑全在，文字图片都对），
+错误只发生在运行期，肉眼与「看源码」都发现不了。
+
+**一分钟定位法**（在浏览器 F12 Console 里执行）：
+
+```js
+typeof XLSX        // "undefined"  → 就是这个故障
+document.querySelectorAll("script[src]").length   // 若 > 0，说明发布的是多文件版
+```
+
+**修复**：重新构建并正确同步——注意同步脚本必须从**单文件版**取材：
+
+```bash
+python build.py && python build.py --single
+python tests/_ghpages_sync.py        # SOURCE = index.single.html，内含两道自包含校验
+```
+
+**防复发**：`tests/_test_release_shape.js` 与 `_test_archive_range.js` 的 `[C]` 段已固化哨兵断言
+（单文件版不得引用 `vendor/`、必须内联 SheetJS、体积必须 > 1MB、`_ghpages_sync.py` 的 `SOURCE` 必须是
+`index.single.html`）。**只要有人再弄混两个产物，测试会立刻变红。**
+
+> 顺带记住两者的**辨识特征**，一眼就能分清：
+> | | 多文件版 `index.html` | 单文件版 `index.single.html` |
+> |---|---|---|
+> | 体积 | ~250 KB | **~2 MB** |
+> | 引用 `vendor/` | 是（必需） | **否（必须内联）** |
+> | 用途 | 本地开发、直接双击 | **gh-pages 发布、离线分发** |
 
 ---
 

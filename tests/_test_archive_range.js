@@ -335,6 +335,70 @@ const rec = (ymd, n, ticket) => ({ sales_time: ymd, n, ticket_no: ticket == null
       ok(/groupRecordsByMonth/.test(h), f + " 含 groupRecordsByMonth（已 inline）");
       ok(/salesDateRange/.test(h), f + " 含 salesDateRange（已 inline）");
     }
+
+    // ---- 发布形态防线（2026-09-30 线上故障后新增）----
+    // 故障回顾：gh-pages 分支只有 index.html + README.md，**没有 vendor/ 目录**。
+    // 某次发布把「多文件版 index.html」当成了单文件版写进 gh-pages，其中
+    //   <script src="vendor/xlsx.full.min.js">
+    // 在线上 404 → XLSX 未定义 → **所有上传文件都被标「未识别」**、点分析毫无反应。
+    // 丑的是页面本身看起来完全正常（HTML/CSS/逻辑都在），只在运行期炸，极难排查。
+    // 下面这几条断言就是那次故障的哨兵。
+    const single = fs.readFileSync(path.join(R, "index.single.html"), "utf8");
+
+    ok(!/<script[^>]+src=["\']vendor\//.test(single),
+      "★ index.single.html 不得引用 vendor/（gh-pages 上没有该目录，引用即 404）");
+    ok(!/<script[^>]+src=["\'](?!https?:|data:)(?!#)/.test(single),
+      "★ index.single.html 不得有任何相对路径的外部脚本引用");
+    ok(/XLSX\s*=/.test(single) && /SheetJS/.test(single),
+      "★ index.single.html 必须内联 SheetJS（XLSX= / SheetJS 标记存在）");
+    ok(single.length > 1_000_000,
+      "★ index.single.html 体积必须 > 1MB（多文件版只有 ~250KB）  (得到 " + single.length + ")");
+
+    // 多文件版 index.html 反过来**应当**引用 vendor/（两者形态不能搞混）
+    const multi = fs.readFileSync(path.join(R, "index.html"), "utf8");
+    ok(/<script[^>]+src=["\']vendor\/xlsx\.full\.min\.js["\']/.test(multi),
+      "index.html（多文件版）应当引用 vendor/xlsx.full.min.js");
+    ok(multi.length < 1_000_000,
+      "index.html（多文件版）体积应远小于单文件版  (得到 " + multi.length + ")");
+
+    // 同步脚本必须从单文件版取内容（SOURCE 写错正是本次故障的根因）
+    const syncSrc = fs.readFileSync(path.join(R, "tests", "_ghpages_sync.py"), "utf8");
+    ok(/SOURCE\s*=\s*["\']index\.single\.html["\']/.test(syncSrc),
+      "★ _ghpages_sync.py 的 SOURCE 必须是 index.single.html");
+    ok(/def verify_self_contained/.test(syncSrc),
+      "★ _ghpages_sync.py 必须有自包含校验（发布前把关）");
+  }
+
+  console.log("\n===== [D] 真实销售明细：识别 + 行数（防「未识别」回归）=====");
+  {
+    // 直接用真实导出文件跑一遍「表头行定位 → 表类型识别」，
+    // 覆盖 [C] 那种「产物结构对但运行期炸」的盲区。
+    const fx = path.join(R, "_fixture_sales_query.xlsx");
+    if (fs.existsSync(fx)) {
+      const ctx2 = { console };
+      ctx2.window = ctx2; ctx2.globalThis = ctx2;
+      vm.createContext(ctx2);
+      vm.runInContext(fs.readFileSync(path.join(R, "vendor", "xlsx.full.min.js"), "utf8"), ctx2);
+      vm.runInContext(fs.readFileSync(path.join(R, "mapping.js"), "utf8"), ctx2);
+      vm.runInContext(fs.readFileSync(path.join(R, "pipeline.js"), "utf8"), ctx2);
+      const XLSX2 = ctx2.XLSX || ctx2.window.XLSX;
+      const M2 = ctx2.window.Mapping;
+
+      const wb = XLSX2.read(fs.readFileSync(fx), { type: "buffer", cellDates: true });
+      const aoa = XLSX2.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],
+        { header: 1, raw: true, defval: null, cellDates: true });
+      const cols = aoa[0].map((c, i) => String(c == null ? "" : c).trim() || ("col_" + i));
+      const ttype = M2.detectTableType(cols);
+
+      eq(ttype, "sales", "★ 真实「销售明细查询报表」被识别为 sales（不是 unknown）");
+      const need = ["销售时间", "商品名称", "会员姓名", "药房名称"];
+      for (const k of need) {
+        ok(cols.some(c => c.includes(k)), "  表头含关键列「" + k + "」");
+      }
+      ok(aoa.length > 100, "  数据行数 > 100  (得到 " + (aoa.length - 1) + ")");
+    } else {
+      console.log("  (跳过：未找到 _fixture_sales_query.xlsx)");
+    }
   }
 
   console.log("\n通过 " + pass + " / " + (pass + fail));
