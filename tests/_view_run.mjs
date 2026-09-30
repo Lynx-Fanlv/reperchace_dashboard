@@ -55,5 +55,44 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     fs.writeFileSync("tests/_view_shot.png", Buffer.from(shot.result.data, "base64"));
     console.log("\n截图已保存 tests/_view_shot.png");
   }
+  // 追加：额外把所有数据行各复制若干份，把表格撑长，再截一张用于看行高与拖拽条
+  await send("Runtime.evaluate", { expression: `(() => {
+    const A = window.AppCore, P = window.Pipeline;
+    const NAME='测试患者2', PHONE='13800002222';
+    const P1='百泽安', P2='百悦泽', P3='索托克拉', P4='无菌笔式注射针INSUPENSterilePenNeedle';
+    const prods=[P1,P2,P3,P4];
+    const mk=(date,prod,seed)=>({source:'sales',_row_id:'f::sales::s::'+date+'_'+seed,sales_time:date,
+      order_status:'已完成',product_raw:prod,product:prod,qty:'1',amount:'1000',
+      member_id:'M'+seed,patient_name:NAME+seed,phone:PHONE,member_phone:PHONE,
+      hospital:'成都医学院第一附属医院(原:中国人民解放军第47军医院)',pharmacy:'成都西三段药房(连锁）',
+      physician:'张医生',department:'肿瘤科',
+      indication:'卵巢恶性肿瘤术后复发多处转移TxNxM1IV期结肠继发恶性肿瘤直肠继发恶性肿瘤',
+      age:'60',gender:'男'});
+    const rows=[];
+    for(let i=0;i<24;i++){
+      const d=new Date(2026,7,1+ (i%20));
+      const ds=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      rows.push(mk(ds, prods[i%4], i+1));
+    }
+    A.STORE.sales = rows;
+    A.STORE.followups=[]; A.STORE.cycles={}; A.STORE.notes={}; A.STORE.reasonOverrides={}; A.STORE.cycleOverrides={};
+    A.state.stdCycle={}; prods.forEach(p=>A.state.stdCycle[p]=21);
+    A.state.cycleAlgo='reset'; A.state.refDate='2026-09-20'; A.state.weekSel='all';
+    A.state.page=1; A.state.pageSize=50;
+    A.ensureStdCycles(prods);
+    A.refresh();
+    window.scrollTo(0, 700);
+    const t=t=document.getElementById('dataTable');
+    const r=document.getElementById('rowResizer');
+    return JSON.stringify({rowResizer: !!r, barH: r?Math.round(r.getBoundingClientRect().height):0,
+      rows: t.querySelectorAll('tbody tr.data-row').length,
+      firstRowH: t.querySelector('tbody tr.data-row')?Math.round(t.querySelector('tbody tr.data-row').getBoundingClientRect().height):0});
+  })()`, awaitPromise: true, returnByValue: true });
+  await sleep(1200);
+  const shot2 = await send("Page.captureScreenshot", { format: "png" });
+  if (shot2.result && shot2.result.data) {
+    fs.writeFileSync("tests/_view_shot2.png", Buffer.from(shot2.result.data, "base64"));
+    console.log("截图已保存 tests/_view_shot2.png（多行表格）");
+  }
   ws.close(); p.kill(); process.exit(0);
 })();

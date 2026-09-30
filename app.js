@@ -767,17 +767,20 @@ function bindColResizers() {
   });
 }
 
-// 重置视图：列宽回到百分比默认档位 + 行高回到 34px（与刷新页面的效果一致）
-function resetView() {
+// 重置列宽：列宽回到百分比默认档位（与刷新页面的效果一致）
+// ⚠ 行高已改为左侧拖拽条调整（无「恢复默认」按钮），故这里不再动行高。
+function resetColWidthsOnly() {
   clearColWidths();
-  setRowHeight(DEFAULT_ROW_H);
   renderTable();
 }
 
 // 行高：写 CSS 变量而不是逐行改 DOM（千行列表逐行写样式会明显卡顿）
-const DEFAULT_ROW_H = 34, MIN_ROW_H = 28, MAX_ROW_H = 72;
+//
+// 天花板从 72px 提到 160px：行高改由**拖拽**调整后，用户会自然地往下拖出"更舒展"的行高，
+// 原 72px 的上限手感上像"拖到头了"，容易让人以为坏了。
+const DEFAULT_ROW_H = 34, MIN_ROW_H = 28, MAX_ROW_H = 160;
 // td 的 height 只是下限 —— 真正的地板是「上下 padding + 内容行高」。默认上下各 7px、内容约 19px，
-// 合计 38px，所以只改 height 的话滑块在 28~37px 区间会「能动但没反应」。
+// 合计 38px，所以只改 height 的话在 28~37px 区间会「能动但没反应」。
 // 故联动压缩上下 padding：目标 h → pad = clamp(2, (h - 21) / 2, 7)。h=28 → pad 3.5、h≥35 → 7（保持默认留白）。
 function setRowHeight(px) {
   const v = Math.max(MIN_ROW_H, Math.min(MAX_ROW_H, Math.round(px)));
@@ -785,10 +788,45 @@ function setRowHeight(px) {
   const root = document.documentElement;
   root.style.setProperty("--row-h", v + "px");
   root.style.setProperty("--row-pad", pad.toFixed(2).replace(/\.?0+$/, "") + "px");
-  const el = $("#rowH"), lab = $("#rowHVal");
-  if (el) el.value = String(v);
+  const lab = $("#rowHVal");           // 工具条已移除，这里兼容保留（取不到就跳过）
   if (lab) lab.textContent = v + "px";
   return v;
+}
+
+// 左侧行高拖拽条：纵向拖动 → 所有行同步变高/变矮。
+// 与 bindColResizers 同一套事件流（pointerdown 在把手、move/up 在 document），
+// 理由见 bindColResizers 注释：renderTable 会重建 thead，setPointerCapture 的节点会变游离。
+let ROW_DRAG = null;                     // 当前拖动会话，防多指并发
+function bindRowResizer() {
+  const bar = $("#rowResizer");
+  if (!bar) return;
+  bar.addEventListener("pointerdown", e => {
+    if (ROW_DRAG) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // 起始行高取 CSS 变量当前值（读变量而非量 DOM，避免受"当前页是否为空"影响）
+    const cur = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")) || DEFAULT_ROW_H;
+    const startY = e.clientY;
+    ROW_DRAG = { startY, startH: cur };
+
+    const onMove = ev => {
+      if (!ROW_DRAG) return;
+      // 向下拖 = 变高，符合「往下拉出空间」的直觉
+      const h = ROW_DRAG.startH + (ev.clientY - ROW_DRAG.startY);
+      setRowHeight(h);
+    };
+    const onUp = () => {
+      ROW_DRAG = null;
+      document.body.classList.remove("row-resizing");
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+    };
+    document.body.classList.add("row-resizing");
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  });
 }
 
 function renderTable() {
@@ -2188,11 +2226,13 @@ document.addEventListener("click", e => {
   closeAllPopovers();
 });
 
-/* ============ 表格视图微调控件（行高滑块 + 恢复默认） ============ */
-$("#rowH").addEventListener("input", e => setRowHeight(+e.target.value));
-$("#resetViewBtn").onclick = () => resetView();
+/* ============ 表格视图微调（左侧行高拖拽条；列宽拖拽在表头右边缘） ============ */
+// 原「行高滑块 + 恢复默认」工具条已移除：滑块占一整天工具条且要离开表格去操作。
+// 现在行高由左侧拖拽条直接拖，与拖列宽同一套手感，也不再需要「恢复默认」按钮。
+bindRowResizer();
 
 /* ============ 本地留档管理器 ============ */
+// 入口按钮已从视图工具条挪到「已选文件」面板的「清空选择」旁边（见 index.template.html）
 $("#archiveMgrBtn").onclick = () => openArchiveManager();
 $("#arcMgrClose").onclick = () => $("#arcMgrMask").classList.add("hidden");
 $("#arcMgrExport").onclick = () => exportArchiveBackup();
@@ -2703,8 +2743,10 @@ function loadSnapshot(snap) {
   ["#exportBtn", "#exportCallbackBtn", "#snapshotDesenBtn", "#snapshotPlainBtn", "#clearAllBtn"].forEach(sl => { const el = $(sl); if (el) el.classList.add("hidden"); });
   // 脱敏开关整条隐藏：快照沿用生成时的脱敏状态，接收方毋需（也无从）调整
   const desenBar = $("#desenBar"); if (desenBar) desenBar.classList.add("hidden");
-  // 表格视图微调（行高/列宽）同样隐藏：快照是冻结的报告，展示口径应统一
-  const viewBar = $("#viewBar"); if (viewBar) viewBar.classList.add("hidden");
+  // 表格视图微调（行高/列宽）同样禁用：快照是冻结的报告，展示口径应统一。
+  // 行高已改为左侧拖拽条，快照下隐藏它（否则拖动会改到快照的展示行高）。
+  const viewBar = $("#viewBar"); if (viewBar) viewBar.classList.add("hidden"); // 老快照兼容，新版无此节点
+  const rowRes = $("#rowResizer"); if (rowRes) rowRes.classList.add("hidden");
   ["#refDateInput", "#clearBtn"].forEach(id => $(id).disabled = true);
   document.querySelectorAll("#cycleInputs .ci-num").forEach(inp => inp.disabled = true);
   document.querySelectorAll(".mm-btn").forEach(b => b.disabled = true);
@@ -2725,7 +2767,7 @@ function loadSnapshot(snap) {
 
 window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason, askSnapshotFams, snapshotFileName, doSnapshot,
   // 视图微调（列宽/行高）—— 导出供回归测试直接验边界夹取逻辑
-  applyColWidth, clearColWidths, setRowHeight, resetView,
+  applyColWidth, clearColWidths, setRowHeight, resetColWidthsOnly,
   COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H,
   // 本地留档：管理器 + 弹窗（askArchiveProducts 导出供回归测试直接验「按时间段勾选」的返回值）
   openArchiveManager, renderArchiveManager, exportArchiveBackup, clearAllArchive,
