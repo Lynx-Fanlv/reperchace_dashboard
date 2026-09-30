@@ -205,6 +205,40 @@
   col.c-prod{width:7.0%;min-width:100px}     /* 品种（长药品名单行省略） */
   col.c-wide{width:7.2%;min-width:100px}     /* 医院、随访类型 */
   col.c-note{width:8.8%;min-width:128px}     /* 跟进备注（输入框需要空间） */
+  /* ---------- 表格视图微调（行高滑块 + 列宽拖拽） ----------
+     两者都「本会话有效、刷新恢复默认」，不写 localStorage。
+     行高：用 CSS 变量 --row-h 统一控制，不逐行改 DOM —— 千行列表下改行内样式会明显卡顿。
+     列宽：拖过的列在 colgroup 里下发固定 px（浏览器渲染后按 px 锁定，不再是百分比），
+           未拖过的列继续沿用上面的百分比档位。二者共存时 px 列先吃走空间、百分比列分剩余，
+           故拖动单列不会让其它列的绝对宽度跳动。 */
+  :root{--row-h:34px}
+  /* 行高：height 对 td 只是「下限」，真正的地板是 上下padding(7+7) + 内容(19) + 边框 = 38px。
+     若只改 height，滑块拖到 28~37px 区间会「能动但没反应」（实测 38px 就卡住）。
+     故把上下 padding 也做成变量，由 app.js 按目标行高联动：
+       目标行高 h → 上下 padding = clamp(2, (h-21)/2, 7)
+     这样 28px 也能真正压下去，同时大行高下仍保持 7px 的舒适留白。 */
+  :root{--row-pad:7px}
+  tbody td{height:var(--row-h);padding-top:var(--row-pad);padding-bottom:var(--row-pad)}
+  .viewbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:8px 2px 6px}
+  .viewbar .vb-grp{display:flex;align-items:center;gap:8px}
+  .viewbar .vb-lbl{font-size:13px;font-weight:600;color:var(--muted)}
+  .viewbar .vb-range{width:150px;accent-color:var(--brand);cursor:pointer;vertical-align:middle}
+  .viewbar .vb-val{font-size:12px;color:var(--muted);min-width:44px;font-variant-numeric:tabular-nums}
+  .viewbar .vb-btn{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:4px 12px;font-size:13px;color:var(--muted);cursor:pointer}
+  .viewbar .vb-btn:hover{border-color:var(--brand);color:var(--brand)}
+  .viewbar .vb-hint{font-size:12px;color:var(--muted);margin-left:auto}
+  /* 列宽拖拽把手：贴在 th 右边缘，平时不可见，悬停/拖动时才显形 */
+  th .col-resizer{position:absolute;top:0;right:-4px;width:9px;height:100%;
+    cursor:col-resize;user-select:none;touch-action:none;z-index:3}
+  th .col-resizer::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;
+    background:transparent}
+  th:hover .col-resizer::after{background:var(--line)}
+  th .col-resizer:hover::after,
+  body.col-resizing th .col-resizer:hover::after{background:var(--brand);width:2px}
+  /* 拖动中：禁用文本选择、给全表加统一光标，避免鼠标移出把手后光标闪变 */
+  body.col-resizing{cursor:col-resize}
+  body.col-resizing th,body.col-resizing td{user-select:none}
   th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;
     overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
   /* 表头：允许换行，但按「词」换行而非逐字竖排；超出两行则省略。
@@ -239,6 +273,13 @@
   .sub{font-size:11px;color:var(--muted);margin-left:4px}
   .sub.due{color:var(--blue)}
   .sub.over{color:var(--bad);font-weight:600}
+  /* 「距今」列：单行数值，按语义着色（与「应购药日」列的小标同色系，保持全表语义一致）。
+     已购药=绿(--good) / 逾期=红(--bad) / 还有N天·今天=蓝(--blue)。
+     不换行：窄列下若折行会把该单元格高度翻倍并撑高整行（详见 .due-cell 注释）。 */
+  .days-num{white-space:nowrap}
+  .days-num.ok{color:var(--good);font-weight:600}
+  .days-num.over{color:var(--bad);font-weight:600}
+  .days-num.due{color:var(--blue)}
   /* 日期列：日期与小标（还有N天/逾期N天/提前N天）排在一行，过长时整体省略。
      若允许换行，窄列下日期与「逾期7天」会各占一行，把该单元格高度翻倍（实测 15→34px），
      进而把整行撑高——这是行高被「过分扩大」的主因之一。 */
@@ -605,9 +646,21 @@
     <div class="col-panel hidden" id="colPanel"></div>
     <div class="filterinfo" id="filterInfo"></div>
 
+    <!-- 表格显示微调：行高滑块 + 列宽重置（都是「本会话有效、刷新回默认」，不持久化） -->
+    <div class="viewbar" id="viewBar">
+      <span class="vb-grp">
+        <span class="vb-lbl">行高</span>
+        <input type="range" class="vb-range" id="rowH" min="28" max="72" step="2" value="34"
+               title="拖动调整所有数据行的行高（仅本次会话有效，刷新恢复默认）">
+        <span class="vb-val" id="rowHVal">34px</span>
+      </span>
+      <button class="vb-btn" id="resetViewBtn" title="恢复默认列宽与行高">恢复默认</button>
+      <span class="vb-hint">拖动表头右边缘可调列宽；本会话有效，刷新恢复默认</span>
+    </div>
+
     <!-- 名单表 -->
-    <div class="tbl-wrap">
-      <table>
+    <div class="tbl-wrap" id="tblWrap">
+      <table id="dataTable">
         <colgroup id="colgroup"></colgroup>
         <thead><tr id="thead"></tr></thead>
         <tbody id="tbody"></tbody>

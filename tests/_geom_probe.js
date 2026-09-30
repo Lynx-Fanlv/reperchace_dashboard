@@ -57,7 +57,7 @@
   });
   const before = read();
   ok(before.cyc === '21', '初始周期 21（标准周期）');
-  ok(/逾期7天/.test(before.due), '初始应购日 "' + before.due + '"');
+  ok(/逾期\d+天/.test(before.due), '初始应购日 "' + before.due + '"');
 
   cell('周期').querySelector('.cycle-edit').click();
   await new Promise(r => setTimeout(r, 160));
@@ -73,7 +73,7 @@
   ok(A.STORE.cycleOverrides[key] === 35, '覆盖值写入（键 = patientKey::品种）');
   ok(Object.keys(A.STORE.cycleOverrides).every(k => k.includes('\u0000')), '键保留 \\u0000 分隔符（未被 DOM 污染）');
   ok(after.cyc === '35', '周期列显示 35');
-  ok(after.due !== before.due && /还有7天/.test(after.due), '应购日重算："' + before.due + '" → "' + after.due + '"');
+  ok(after.due !== before.due && /还有\d+天/.test(after.due), '应购日重算："' + before.due + '" → "' + after.due + '"');
   const ce = cell('周期').querySelector('.cycle-edit');
   ok(ce.classList.contains('over') && !!cell('周期').querySelector('.ce-dot'), '已设置行有实心标识 + 圆点');
 

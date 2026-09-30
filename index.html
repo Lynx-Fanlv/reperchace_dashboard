@@ -205,6 +205,40 @@
   col.c-prod{width:7.0%;min-width:100px}     /* 品种（长药品名单行省略） */
   col.c-wide{width:7.2%;min-width:100px}     /* 医院、随访类型 */
   col.c-note{width:8.8%;min-width:128px}     /* 跟进备注（输入框需要空间） */
+  /* ---------- 表格视图微调（行高滑块 + 列宽拖拽） ----------
+     两者都「本会话有效、刷新恢复默认」，不写 localStorage。
+     行高：用 CSS 变量 --row-h 统一控制，不逐行改 DOM —— 千行列表下改行内样式会明显卡顿。
+     列宽：拖过的列在 colgroup 里下发固定 px（浏览器渲染后按 px 锁定，不再是百分比），
+           未拖过的列继续沿用上面的百分比档位。二者共存时 px 列先吃走空间、百分比列分剩余，
+           故拖动单列不会让其它列的绝对宽度跳动。 */
+  :root{--row-h:34px}
+  /* 行高：height 对 td 只是「下限」，真正的地板是 上下padding(7+7) + 内容(19) + 边框 = 38px。
+     若只改 height，滑块拖到 28~37px 区间会「能动但没反应」（实测 38px 就卡住）。
+     故把上下 padding 也做成变量，由 app.js 按目标行高联动：
+       目标行高 h → 上下 padding = clamp(2, (h-21)/2, 7)
+     这样 28px 也能真正压下去，同时大行高下仍保持 7px 的舒适留白。 */
+  :root{--row-pad:7px}
+  tbody td{height:var(--row-h);padding-top:var(--row-pad);padding-bottom:var(--row-pad)}
+  .viewbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:8px 2px 6px}
+  .viewbar .vb-grp{display:flex;align-items:center;gap:8px}
+  .viewbar .vb-lbl{font-size:13px;font-weight:600;color:var(--muted)}
+  .viewbar .vb-range{width:150px;accent-color:var(--brand);cursor:pointer;vertical-align:middle}
+  .viewbar .vb-val{font-size:12px;color:var(--muted);min-width:44px;font-variant-numeric:tabular-nums}
+  .viewbar .vb-btn{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:4px 12px;font-size:13px;color:var(--muted);cursor:pointer}
+  .viewbar .vb-btn:hover{border-color:var(--brand);color:var(--brand)}
+  .viewbar .vb-hint{font-size:12px;color:var(--muted);margin-left:auto}
+  /* 列宽拖拽把手：贴在 th 右边缘，平时不可见，悬停/拖动时才显形 */
+  th .col-resizer{position:absolute;top:0;right:-4px;width:9px;height:100%;
+    cursor:col-resize;user-select:none;touch-action:none;z-index:3}
+  th .col-resizer::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;
+    background:transparent}
+  th:hover .col-resizer::after{background:var(--line)}
+  th .col-resizer:hover::after,
+  body.col-resizing th .col-resizer:hover::after{background:var(--brand);width:2px}
+  /* 拖动中：禁用文本选择、给全表加统一光标，避免鼠标移出把手后光标闪变 */
+  body.col-resizing{cursor:col-resize}
+  body.col-resizing th,body.col-resizing td{user-select:none}
   th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;
     overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
   /* 表头：允许换行，但按「词」换行而非逐字竖排；超出两行则省略。
@@ -239,6 +273,13 @@
   .sub{font-size:11px;color:var(--muted);margin-left:4px}
   .sub.due{color:var(--blue)}
   .sub.over{color:var(--bad);font-weight:600}
+  /* 「距今」列：单行数值，按语义着色（与「应购药日」列的小标同色系，保持全表语义一致）。
+     已购药=绿(--good) / 逾期=红(--bad) / 还有N天·今天=蓝(--blue)。
+     不换行：窄列下若折行会把该单元格高度翻倍并撑高整行（详见 .due-cell 注释）。 */
+  .days-num{white-space:nowrap}
+  .days-num.ok{color:var(--good);font-weight:600}
+  .days-num.over{color:var(--bad);font-weight:600}
+  .days-num.due{color:var(--blue)}
   /* 日期列：日期与小标（还有N天/逾期N天/提前N天）排在一行，过长时整体省略。
      若允许换行，窄列下日期与「逾期7天」会各占一行，把该单元格高度翻倍（实测 15→34px），
      进而把整行撑高——这是行高被「过分扩大」的主因之一。 */
@@ -605,9 +646,21 @@
     <div class="col-panel hidden" id="colPanel"></div>
     <div class="filterinfo" id="filterInfo"></div>
 
+    <!-- 表格显示微调：行高滑块 + 列宽重置（都是「本会话有效、刷新回默认」，不持久化） -->
+    <div class="viewbar" id="viewBar">
+      <span class="vb-grp">
+        <span class="vb-lbl">行高</span>
+        <input type="range" class="vb-range" id="rowH" min="28" max="72" step="2" value="34"
+               title="拖动调整所有数据行的行高（仅本次会话有效，刷新恢复默认）">
+        <span class="vb-val" id="rowHVal">34px</span>
+      </span>
+      <button class="vb-btn" id="resetViewBtn" title="恢复默认列宽与行高">恢复默认</button>
+      <span class="vb-hint">拖动表头右边缘可调列宽；本会话有效，刷新恢复默认</span>
+    </div>
+
     <!-- 名单表 -->
-    <div class="tbl-wrap">
-      <table>
+    <div class="tbl-wrap" id="tblWrap">
+      <table id="dataTable">
         <colgroup id="colgroup"></colgroup>
         <thead><tr id="thead"></tr></thead>
         <tbody id="tbody"></tbody>
@@ -2272,6 +2325,91 @@ function colClass(key) {
   return "";
 }
 
+/* ============ 列宽拖拽（本会话有效，不持久化） ============
+ * 口径：拖过的列固定为 px，未拖过的列继续按 c-* 百分比档位自适应；
+ *       刷新页面即回到默认（不写 localStorage / 不进快照）。
+ * 为什么 px 列不参与百分比分配：固定布局下 px 列先占走空间、百分比列再分剩余宽度，
+ *   因此拖动某一列不会让其它列绝对宽度跟着跳动（更接近 Excel 的手感）。 */
+const COL_W = {};        // { [colKey]: px }，仅存用户拖过的列
+const COL_MIN = 48;      // 最小列宽，防止拖成 0 宽后无法再抓回
+const COL_MAX = 640;     // 最大列宽，防止一列吃掉整个表格
+
+// 列宽落定：写完 colgroup 后立刻同步一次（避免下次 innerHTML 重建时丢失已调宽度）
+function applyColWidth(key, px, col) {
+  const v = Math.max(COL_MIN, Math.min(COL_MAX, Math.round(px)));
+  COL_W[key] = v;
+  if (col) col.style.width = v + "px";
+  return v;
+}
+function clearColWidths() {
+  for (const k of Object.keys(COL_W)) delete COL_W[k];
+}
+
+// 为表头每列的把手绑定拖拽。renderTable 每次重建 thead 后都要重新调用。
+// 事件流：pointerdown 绑在把手上，pointermove/pointerup 绑在 document 上。
+// 为什么不用 setPointerCapture：一是 renderTable 会重建 thead，被捕获的节点会变成游离节点；
+//   二是捕获期间后续 pointerdown 会被重定向到捕获元素，实测第二次拖拽直接收不到事件（静默失效）。
+//   走 document 监听 + 一次性解绑，行为稳定且不依赖指针捕获。
+let COL_DRAG = null; // 当前拖动会话，防止多指/多把手并发
+function bindColResizers() {
+  $("#thead").querySelectorAll(".col-resizer").forEach(h => {
+    h.addEventListener("pointerdown", e => {
+      if (COL_DRAG) return;                // 已有拖动在进行中，忽略
+      e.preventDefault();
+      e.stopPropagation();                 // 不要触发排序/筛选等表头交互
+      const key = h.dataset.col;
+      const thEl = h.parentNode;
+      const colEl = $("#colgroup").children[
+        Array.prototype.indexOf.call($("#thead").children, thEl)];
+      if (!colEl) return;
+      // 起始宽度取渲染后的实际宽度（百分比档位也要先转成 px 才能接着拖）
+      const startX = e.clientX;
+      const startW = colEl.getBoundingClientRect().width || thEl.getBoundingClientRect().width;
+      COL_DRAG = { key, el: colEl, startX, startW };
+
+      const onMove = ev => {
+        const cur = Math.max(COL_MIN, Math.min(COL_MAX, COL_DRAG.startW + (ev.clientX - COL_DRAG.startX)));
+        applyColWidth(COL_DRAG.key, cur, COL_DRAG.el);
+      };
+      const onUp = () => {
+        COL_DRAG = null;
+        document.body.classList.remove("col-resizing");
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+      };
+      document.body.classList.add("col-resizing");
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
+    });
+  });
+}
+
+// 重置视图：列宽回到百分比默认档位 + 行高回到 34px（与刷新页面的效果一致）
+function resetView() {
+  clearColWidths();
+  setRowHeight(DEFAULT_ROW_H);
+  renderTable();
+}
+
+// 行高：写 CSS 变量而不是逐行改 DOM（千行列表逐行写样式会明显卡顿）
+const DEFAULT_ROW_H = 34, MIN_ROW_H = 28, MAX_ROW_H = 72;
+// td 的 height 只是下限 —— 真正的地板是「上下 padding + 内容行高」。默认上下各 7px、内容约 19px，
+// 合计 38px，所以只改 height 的话滑块在 28~37px 区间会「能动但没反应」。
+// 故联动压缩上下 padding：目标 h → pad = clamp(2, (h - 21) / 2, 7)。h=28 → pad 3.5、h≥35 → 7（保持默认留白）。
+function setRowHeight(px) {
+  const v = Math.max(MIN_ROW_H, Math.min(MAX_ROW_H, Math.round(px)));
+  const pad = Math.max(2, Math.min(7, (v - 21) / 2));
+  const root = document.documentElement;
+  root.style.setProperty("--row-h", v + "px");
+  root.style.setProperty("--row-pad", pad.toFixed(2).replace(/\.?0+$/, "") + "px");
+  const el = $("#rowH"), lab = $("#rowHVal");
+  if (el) el.value = String(v);
+  if (lab) lab.textContent = v + "px";
+  return v;
+}
+
 function renderTable() {
   const cols = visibleCols();
   const total = DATA.rows.length;
@@ -2279,13 +2417,21 @@ function renderTable() {
   if (state.page > pages) state.page = pages;
   const start = (state.page - 1) * state.pageSize;
   const rows = DATA.rows.slice(start, start + state.pageSize);
-  // 列宽随「列显隐」动态下发：用 colgroup 而非在行内写宽度，隐藏列时列宽不会错位
+  // 列宽随「列显隐」动态下发：用 colgroup 而非在行内写宽度，隐藏列时列宽不会错位。
+  // 用户手动拖过宽度的列下发固定 px（内联 style 覆盖 c-* 的百分比档位），其余列沿用百分比档位。
   const cg = $("#colgroup");
   if (cg) cg.innerHTML = cols.map(([key]) => {
     const c = colClass(key);
-    return c ? `<col class="${c}">` : "<col>";
+    const px = COL_W[key];
+    const style = px ? ` style="width:${px}px"` : "";
+    return `<col class="${c || ""}"${style}>`;
   }).join("");
-  $("#thead").innerHTML = cols.map(([, label]) => `<th>${label}</th>`).join("");
+  // 表头单元格：每列右边缘挂一个拖拽把手（最后一列不挂 —— 无处可拖，且会与纵向滚动条抢鼠标）
+  $("#thead").innerHTML = cols.map(([key, label], i) =>
+    `<th>${label}` + (i < cols.length - 1
+      ? `<span class="col-resizer" data-col="${key}" title="拖动调整列宽"></span>`
+      : "") + `</th>`).join("");
+  bindColResizers();
   const tb = $("#tbody");
   if (!total) { tb.innerHTML = ""; $("#empty").classList.remove("hidden"); }
   else {
@@ -2442,8 +2588,16 @@ function rowHtml(r, idx, cols) {
   const cells = cols.map(([key]) => {
     if (key === "due_date") return `<td>${dueTxt}</td>`;
     if (key === "days_to_due") {
-      if (isRepur) return `<td>${esc(r.purchase_days_ago != null ? r.purchase_days_ago + "天前已购药" : "—")}</td>`;
-      return `<td>${esc(days === 0 ? "今天" : (days > 0 ? "+" + days : String(days)))}</td>`;
+      // 「距今」：单行数值 + 按语义着色（不换行、不加文字小标）。
+      // 色语义与「应购药日」列的小标一致：已购药=绿(--good) / 逾期=红(--bad) / 还有N天·今天=蓝(--blue)。
+      // ⚠ 必须单行：窄列下折行会让本单元格高度翻倍并撑高整行（见 index.template.html 的 .due-cell 注释）。
+      if (isRepur) {
+        if (r.purchase_days_ago == null) return `<td><span class="days-num">—</span></td>`;
+        return `<td><span class="days-num ok">${esc(r.purchase_days_ago + "天前已购药")}</span></td>`;
+      }
+      const numTxt = days === 0 ? "今天" : (days > 0 ? "+" + days : String(days));
+      const numCls = days > 0 ? "due" : (days < 0 ? "over" : "due");
+      return `<td><span class="days-num ${numCls}">${esc(numTxt)}</span></td>`;
     }
     if (key === "status") {
       // 应回购行仅显示细分标签（应回未回 / 应回已回）；其他主状态照常显示
@@ -3399,6 +3553,10 @@ document.addEventListener("click", e => {
   closeAllPopovers();
 });
 
+/* ============ 表格视图微调控件（行高滑块 + 恢复默认） ============ */
+$("#rowH").addEventListener("input", e => setRowHeight(+e.target.value));
+$("#resetViewBtn").onclick = () => resetView();
+
 // 脱敏开关：姓名 / 电话 / 医生（脱敏=默认，不脱敏=明文）
 function bindDesenToggle() {
   document.querySelectorAll(".dt-btn").forEach(b => b.onclick = () => {
@@ -3462,6 +3620,18 @@ async function doExport() {
   const idxDays = effCols.findIndex(([k]) => k === "days_to_due");
   const idxSig = effCols.findIndex(([k]) => k === "fu_signal");
   const EXPORT_SIG_FONT = { normal: "FF0F9D6B", nonstd: "FFE8590C", dropout: "FFE03131" };
+  // 「距今」列导出字体：与列表 .days-num 三色一致（已购药=绿 / 逾期=红 / 还有N天·今天=蓝）。
+  // 无值返回 null（保持默认字体，不误染色）。
+  const EXPORT_DAYS_OK = "FF0F9D6B", EXPORT_DAYS_OVER = "FFE03131", EXPORT_DAYS_DUE = "FF3B5BDB";
+  function exportDaysFont(r) {
+    if (r.repur_part === "应回已回") {
+      return r.purchase_days_ago == null ? null : { bold: true, color: { argb: EXPORT_DAYS_OK } };
+    }
+    const d = r.days_to_due;
+    if (typeof d !== "number" || !isFinite(d)) return null;
+    if (d < 0) return { bold: true, color: { argb: EXPORT_DAYS_OVER } };
+    return { color: { argb: EXPORT_DAYS_DUE } }; // d === 0（今天）与 d > 0（还有N天）同蓝
+  }
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("预计购药名单");
@@ -3529,9 +3699,10 @@ async function doExport() {
     if (idxReason >= 0 && r.reason) {
       row.getCell(idxReason + 1).font = { bold: true, color: { argb: "FFE8590C" } };
     }
-    // 距今天数：逾期标红加粗
-    if (idxDays >= 0 && typeof r.days_to_due === "number" && r.days_to_due < 0) {
-      row.getCell(idxDays + 1).font = { bold: true, color: { argb: "FFE03131" } };
+    // 距今天数：与列表同色语义（已购药=绿 / 逾期=红 / 还有N天·今天=蓝）
+    if (idxDays >= 0) {
+      const dFont = exportDaysFont(r);
+      if (dFont) row.getCell(idxDays + 1).font = dFont;
     }
     // 随访信号：按类别着色（正常=绿 / 可能延期=橙 / 脱落=红）
     if (idxSig >= 0 && r.fu_signal && EXPORT_SIG_FONT[r.fu_signal_kind]) {
@@ -3880,6 +4051,8 @@ function loadSnapshot(snap) {
   ["#exportBtn", "#exportCallbackBtn", "#snapshotDesenBtn", "#snapshotPlainBtn", "#clearAllBtn"].forEach(sl => { const el = $(sl); if (el) el.classList.add("hidden"); });
   // 脱敏开关整条隐藏：快照沿用生成时的脱敏状态，接收方毋需（也无从）调整
   const desenBar = $("#desenBar"); if (desenBar) desenBar.classList.add("hidden");
+  // 表格视图微调（行高/列宽）同样隐藏：快照是冻结的报告，展示口径应统一
+  const viewBar = $("#viewBar"); if (viewBar) viewBar.classList.add("hidden");
   ["#refDateInput", "#clearBtn"].forEach(id => $(id).disabled = true);
   document.querySelectorAll("#cycleInputs .ci-num").forEach(inp => inp.disabled = true);
   document.querySelectorAll(".mm-btn").forEach(b => b.disabled = true);
@@ -3898,7 +4071,10 @@ function loadSnapshot(snap) {
   renderSummaryPanel(); // 快照下直接返回（面板已移除），保留调用以兼容老快照
 }
 
-window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason, askSnapshotFams, snapshotFileName, doSnapshot };
+window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason, askSnapshotFams, snapshotFileName, doSnapshot,
+  // 视图微调（列宽/行高）—— 导出供回归测试直接验边界夹取逻辑
+  applyColWidth, clearColWidths, setRowHeight, resetView,
+  COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H };
 })();
 
 </script>

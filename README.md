@@ -203,6 +203,44 @@ python -m http.server 8000
 > 实测：行高 **71px → 38px**（设置周期后 42px），横向溢出 **556px → 20px**。
 > 真实浏览器几何验收见 `tests/_geom_run.mjs`（22 项）。
 
+## 手动调列宽 / 行高（像 Excel 一样）
+
+列表上方有「视图」工具条，两个都是**本会话有效、刷新即恢复默认**（不写 `localStorage`、不进快照）：
+
+| 操作 | 方式 | 口径 |
+|---|---|---|
+| 调列宽 | 拖动**表头右边缘**（悬停显蓝线） | 拖过的列固定为 px（48~640 夹取），未拖过的列继续按百分比档位自适应 |
+| 调行高 | 「行高」滑块，28~72px | 一次调所有数据行，实时生效 |
+| 复位 | 「恢复默认」按钮 | 列宽回到百分比档位 + 行高回 34px |
+
+- **末列无把手**：最右一列没有可拖的边界，且把手会与纵向滚动条抢鼠标。
+- **拖窄一列的边界**：整表 `width:100%`，且其余列有 `min-width`，浏览器会把富余宽度回填，
+  故实际能压到的地板**高于** `COL_MIN`（48px）——实测 `医院` 列约 100px。这是布局约束，不是夹取失效。
+- **行高的真实地板**：`td` 的 `height` 只是下限，真正卡住高度的是「上下 padding + 内容行高」。
+  默认上下各 7px、内容约 19px，合计 38px —— 若只改 `height`，滑块在 28~37px 区间会「能动但没反应」。
+  故上下 padding 也做成变量 `--row-pad`，由 `setRowHeight` 联动压缩：`pad = clamp(2, (h-21)/2, 7)`。
+  实测 28→31px、40→40px、72→72px，全程单调响应。
+- **不用 `setPointerCapture`**：一是 `renderTable` 会重建 `thead`，被捕获的节点会变成游离节点；
+  二是捕获期间后续 `pointerdown` 会被重定向到捕获元素，**实测第二次拖拽直接收不到事件**（静默失效）。
+  改走 `pointerdown`（把手）+ `pointermove/up`（document）+ 一次性解绑。
+- **快照模式下整条工具条隐藏**：快照是冻结的报告，展示口径应统一。
+
+> 真实浏览器验收见 `tests/_view_run.mjs`（38 项：着色色值、拖拽事件流、边界夹取、行高单调性、不持久化）。
+
+## 「距今」列着色
+
+单行数值 + 按语义着色，**不换行、不加文字小标**。色语义与「应购药日」列的小标**同源**，
+保证全表读法一致：
+
+| 情形 | 显示 | 颜色 |
+|---|---|---|
+| 应回已回 | `N天前已购药` | 绿 `--good #0f9d6b` |
+| 逾期 | `-N` | 红 `--bad #e03131` |
+| 还有 N 天 / 今天 | `+N` / `今天` | 蓝 `--blue #3b5bdb` |
+
+- 必须单行（`.days-num` 带 `white-space: nowrap`）：窄列折行会把该单元格高度翻倍并撑高整行。
+- **导出 Excel 同步着色**：`exportDaysFont()` 与列表同色语义；无值返回 `null`，保持默认字体不误染。
+
 ## 维护（重要）
 
 逻辑代码在三个源文件中，修改后**必须重新生成** `index.html`：
@@ -232,6 +270,7 @@ node _test_snapshot_e2e_dom.js   # 真实 DOM 端到端：生成快照 → 打�
 node _test_patient_key.js        # 患者唯一键 = 姓名 + 电话（重名/同号不误合并、重名不串随访）
 node _test_cycleedit_clip.js     # 列表内改周期（优先级链/粒度/清空恢复）+ 长文本截断样式
 node _test_dedup.js              # 销售明细跨文件自动去重（键构造/五要素不误删/无票全留/顺序无关/产物防线）
+node _test_days_color.js         # 「距今」列三色着色（单行/色类/CSS 变量/导出字体同源）
 ```
 
 > 全量跑一遍：`for f in tests/_test_*.js; do node "$f" || echo "FAIL $f"; done`
@@ -243,6 +282,7 @@ node _test_dedup.js              # 销售明细跨文件自动去重（键构造
 > 浏览器端验收（需本机 Chrome + `ws` 模块，`NODE_PATH` 指向其 `node_modules`）：
 > ```bash
 > node tests/_geom_run.mjs    # 真实浏览器几何：列宽/行高/溢出 + 周期编辑交互 + 长文本展开
+> node tests/_view_run.mjs    # 真实浏览器：距今着色色值 + 列宽拖拽事件流/边界夹取 + 行高滑块单调性 + 不持久化
 > node tests/_cdp_dedup.mjs "<A.xlsx>" "<B.xlsx>"   # 真实浏览器上传两份重叠销售明细，核对去重提示条与数字
 > node tests/_mk_probe_page.js && node tests/_cdp_run.mjs "file:///<abs>/tests/_probe_page.html" \
 >   "(async()=>{for(let i=0;i<80;i++){if(window.__DONE__)break;await new Promise(r=>setTimeout(r,300));}return window.__RESULT__;})()"
