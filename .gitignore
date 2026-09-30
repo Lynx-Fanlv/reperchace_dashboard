@@ -16,6 +16,7 @@ tests/_arc_range_*.png
 tests/_zoom*.png
 tests/_view_zoom*.png
 tests/_view_zoom.py
+tests/_live_row_shot.png
 
 # CDP 验收用的样例数据（从本机下载目录临时拷入，跑完即删）
 _fixture_*.xlsx
