@@ -532,26 +532,163 @@ async function loadArchiveSales(product) {
   }
 }
 
-// 写入某品种的留档（**整品种覆盖**，不做增量合并：本次数据已是「历史+本次」合并后的结果）
+// 写入某品种的留档（**只增不删并入**）
+//
+// ⚠ 历史教训：这里曾是「整品种覆盖」——写的是「历史 + 本次去重后」的全集。
+//   该设计隐含假设「本次上传 = 该品种的全量」，但假设不成立：
+//   用户只上传某品种的一个月数据时，写回会把留档从「8月10条 + 9月1条」覆盖成「只有9月的1条」，
+//   历史被**静默丢弃**（实测复现 10 条 → 1 条）。故改为并入语义，永不自动删历史。
+//
+// 并入规则（按 salesDedupKey 比对，与跨文件去重同一把尺子）：
+//   · 键相同 → 用 _betterSalesRow 选出更优的那行**替换**（新数据可能补全了旧数据缺的字段）
+//   · 键不同 → **追加**
+//   · 无小票号（键为 null）→ 一律追加，不做任何匹配（宁可不合并也不错合并）
+//
+// 代价（须知晓）：若去重键抓不住某类差异（如数量写成 "1" vs "1.0"），这些行会**逐轮累加**，
+// 而旧的覆盖语义至少会把留档重置回本轮集合。因此本函数必须与「本地留档管理器」配套：
+// 用户可随时查看条数、导出备份、或手动清理。见 app.js 的 openArchiveManager。
 async function saveArchiveSales(product, records) {
   const dir = await _opfsSalesDir(product, true);
   if (!dir) return false;
   try {
+    // 读出现有留档作为并入基底（读不到当作空，不影响写入）
+    const old = await loadArchiveSales(product);
+    const base = (old && Array.isArray(old.records)) ? old.records : [];
+    const merged = mergeArchiveRecords(base, records);
+
     const fh = await dir.getFileHandle("sales.json", { create: true });
     const w = await fh.createWritable();
     await w.write(JSON.stringify({
       version: 1,
       product: product,
       updated_at: fmtDateTime(new Date()),
-      records: records || [],
+      records: merged,
     }));
     await w.close();
     return true;
   } catch (e) { return false; }
 }
 
-// 列出本地留档里所有品种（含各自的记录条数与更新时间），按品种名排序。
+// 留档并入：base（已有历史）+ incoming（本次）→ 新集合。保留 base 的顺序，新键追加在后。
+// 抽成独立函数是为了能单测（saveArchiveSales 依赖 OPFS，无法在 Node 里直连）。
+function mergeArchiveRecords(base, incoming) {
+  const out = [];
+  const index = new Map(); // dedupKey -> 在 out 里的下标（仅含有键的行）
+  for (const r of (Array.isArray(base) ? base : [])) {
+    if (!r) continue;
+    const k = salesDedupKey(r);
+    if (k == null) { out.push(r); continue; }   // 无小票号：直接留，不参与合并
+    // base 内部若已有同键（旧版本可能写进过重复），后者更优则顶替
+    if (index.has(k)) {
+      const at = index.get(k);
+      if (_betterSalesRow(r, out[at])) out[at] = r;
+    } else {
+      index.set(k, out.length);
+      out.push(r);
+    }
+  }
+  for (const r of (Array.isArray(incoming) ? incoming : [])) {
+    if (!r) continue;
+    const k = salesDedupKey(r);
+    if (k == null) { out.push(r); continue; }
+    if (index.has(k)) {
+      const at = index.get(k);
+      if (_betterSalesRow(r, out[at])) out[at] = r;   // 同键：择优替换，不新增
+    } else {
+      index.set(k, out.length);
+      out.push(r);                                     // 新键：追加
+    }
+  }
+  return out;
+}
+
+// ---------- 留档的「日期跨度」与「按月分段」 ----------
+//
+// 为什么要它：留档目录名必须稳定（一旦改名，用户已有的留档就读不到了），
+// 所以「品种名 + 销售时间起止」不能当目录名用，只能当**显示名**。
+// 这里从记录的 sales_time 里算出 [min, max] 与按月分段，供 UI 展示与按段筛选。
+
+// 把 "YYYY-MM-DD" 压缩成显示用的 "YY.M.D"（如 2025-01-01 → 25.1.1）
+function _shortDate(ymd) {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  return `${m[1].slice(2)}.${+m[2]}.${+m[3]}`;
+}
+
+// 记录集合的销售时间范围 → { from, to, label }
+//   from/to 为 "YYYY-MM-DD"；label 形如 "25.1.1-26.3.4"（单日则只显示一个日期）
+//   无任何可解析日期 → { from:"", to:"", label:"" }（调用方原样退回品种名）
+function salesDateRange(records) {
+  let mn = "", mx = "";
+  for (const r of (Array.isArray(records) ? records : [])) {
+    const d = datePart(r && r.sales_time);
+    if (!d) continue;
+    if (!mn || d < mn) mn = d;
+    if (!mx || d > mx) mx = d;
+  }
+  if (!mn) return { from: "", to: "", label: "" };
+  const a = _shortDate(mn), b = _shortDate(mx);
+  return { from: mn, to: mx, label: a === b ? a : `${a}-${b}` };
+}
+
+// 「品种名 · 日期跨度」显示名。无日期时退化为品种名本身。
+function archiveDisplayName(product, records) {
+  const rg = salesDateRange(records);
+  return rg.label ? `${product} · ${rg.label}` : String(product == null ? "" : product);
+}
+
+// 把记录按「销售时间所属月份」分段 → [{ month:"2025-01", label:"2025年1月", count, records }]
+// 月份降序（新的在前）；无法解析日期的记录归到 month="" 的「未知日期」段，排在最后。
+function groupRecordsByMonth(records) {
+  const buckets = new Map();
+  let unknown = 0;
+  for (const r of (Array.isArray(records) ? records : [])) {
+    const d = datePart(r && r.sales_time);
+    if (!d) { unknown++; continue; }
+    const mk = d.slice(0, 7); // YYYY-MM
+    if (!buckets.has(mk)) buckets.set(mk, []);
+    buckets.get(mk).push(r);
+  }
+  const out = Array.from(buckets.keys()).sort().reverse().map(mk => ({
+    month: mk,
+    label: `${mk.slice(0, 4)}年${+mk.slice(5, 7)}月`,
+    count: buckets.get(mk).length,
+    records: buckets.get(mk),
+  }));
+  if (unknown) out.push({ month: "", label: "未知销售时间", count: unknown, records: [] });
+  return out;
+}
+
+// 按「月份段」取历史记录。
+//   months == null            → 返回全部（= 不筛选，向后兼容旧调用）
+//   months == []              → 返回**空**（用户「全不选」的明确表达）
+//   months == ["2025-01", ...] → 只返回所属月份命中集合的记录
+//
+// ⚠ 空数组必须表示「一条都不要」而不是「不筛」——否则用户点「全不选」会得到全部历史，
+//   与界面上的勾选状态直接矛盾（那是会让人误判数据的 bug）。
+//   想表达「不筛」请传 null。
+// ⚠ 未知日期段的 key 是空串，用 "" 传进来表示「要未知日期那一段」；
+//   因此这里用 `months == null` 判定「没传」，而不是 `!months.length`。
+function filterRecordsByMonths(records, months) {
+  const list = Array.isArray(records) ? records : [];
+  if (months == null) return list;
+  const set = new Set(Array.isArray(months) ? months : [months]);
+  if (!set.size) return []; // 空数组 = 全不选 → 一条都不取
+  const out = [];
+  for (const r of list) {
+    const d = datePart(r && r.sales_time);
+    const mk = d ? d.slice(0, 7) : "";
+    if (set.has(mk)) out.push(r);
+  }
+  return out;
+}
+
+// 列出本地留档里所有品种（含各自的记录条数、更新时间、销售时间跨度），按品种名排序。
 // 读取顺序：遍历「销售」目录下的子目录，逐个尝试读 sales.json。
+// 返回项：{ product, count, updated_at, from, to, rangeLabel, displayName }
+//   from/to     —— "YYYY-MM-DD"，该品种留档记录的销售时间最小/最大值（无日期则空串）
+//   rangeLabel  —— "25.1.1-26.3.4"（供「品种名 · 时间段」展示）
+//   displayName —— "百泽安 · 25.1.1-26.3.4"（无日期时就是品种名）
 async function listArchiveProducts() {
   if (!OPFS_AVAILABLE) return [];
   const out = [];
@@ -566,7 +703,13 @@ async function listArchiveProducts() {
         const fh = await handle.getFileHandle("sales.json");
         const obj = JSON.parse(await (await fh.getFile()).text());
         if (obj && Array.isArray(obj.records)) {
-          meta = { product: obj.product || name, count: obj.records.length, updated_at: obj.updated_at || "" };
+          const product = obj.product || name;
+          const rg = salesDateRange(obj.records);
+          meta = {
+            product, count: obj.records.length, updated_at: obj.updated_at || "",
+            from: rg.from, to: rg.to, rangeLabel: rg.label,
+            displayName: rg.label ? `${product} · ${rg.label}` : product,
+          };
         }
       } catch (e) { /* 该子目录没有可读留档 → 跳过 */ }
       if (meta) out.push(meta);
@@ -577,7 +720,7 @@ async function listArchiveProducts() {
   return out.sort((a, b) => String(a.product).localeCompare(String(b.product), "zh"));
 }
 
-// 删除某品种的留档（暂未接 UI，留给后续「清理留档」入口）
+// 删除某品种的留档
 async function removeArchiveSales(product) {
   if (!OPFS_AVAILABLE) return false;
   try {
@@ -589,18 +732,73 @@ async function removeArchiveSales(product) {
   } catch (e) { return false; }
 }
 
+// 清空整个留档（删除「销售」目录下所有品种）。供「本地留档管理器」的「全部清空」使用。
+// 返回 { ok, removed } —— removed 是实际删掉的品种数，供界面回显。
+async function removeAllArchiveSales() {
+  if (!OPFS_AVAILABLE) return { ok: false, removed: 0 };
+  let removed = 0;
+  try {
+    const root = await navigator.storage.getDirectory();
+    const base = await root.getDirectoryHandle("留档", { create: false });
+    const sales = await base.getDirectoryHandle("销售", { create: false });
+    // 先收集名字再删：直接在 entries() 迭代中删会打乱迭代器
+    const names = [];
+    for await (const [name, handle] of sales.entries()) {
+      if (handle && handle.kind === "directory") names.push(name);
+    }
+    for (const name of names) {
+      try { await sales.removeEntry(name, { recursive: true }); removed++; } catch (e) { /* 单个失败不中断 */ }
+    }
+    return { ok: true, removed };
+  } catch (e) {
+    return { ok: true, removed }; // 「留档」目录本就不存在 = 已是空，视为成功
+  }
+}
+
+// 读出全部留档记录（供「导出留档备份」）。返回 { records, products:[{product,count,updated_at}] }
+async function loadAllArchiveRecords() {
+  const meta = await listArchiveProducts();
+  const records = [];
+  for (const m of meta) {
+    const obj = await loadArchiveSales(m.product);
+    if (obj && Array.isArray(obj.records)) records.push(...obj.records);
+  }
+  return { records, products: meta };
+}
+
 // 取出指定品种集合的历史销售记录，拼成一个数组（供与本次数据合并后去重）。
-// products 为空 → 返回空数组，**不读任何历史**（保证「本次品种无历史」时零副作用）。
+//
+// 两种入参写法都支持（向后兼容旧的「只传品种名数组」）：
+//   · ["百泽安", "百悦泽"]                    → 这两个品种的**全部**历史
+//   · [{product:"百泽安", months:["2025-01"]}] → 只取该品种 2025年1月 的历史
+//     months 为 null/undefined → 该品种全部；months 为 [] → 该品种一条都不取。
+//
+// 空集合 → 返回空数组，**不读任何历史**（保证「本次品种无历史」时零副作用）。
 async function loadArchiveSalesFor(products) {
-  const list = Array.isArray(products) ? products.filter(Boolean) : [];
+  const raw = Array.isArray(products) ? products : [];
+  const picks = raw.map(x => {
+    if (x == null) return null;
+    if (typeof x === "string") return { product: x, months: null };
+    return { product: x.product, months: x.months === undefined ? null : x.months };
+  }).filter(x => x && String(x.product || "").trim());
   const out = [];
   const loaded = [];
-  for (const p of list) {
-    const obj = await loadArchiveSales(p);
-    if (obj && Array.isArray(obj.records) && obj.records.length) {
-      for (const r of obj.records) out.push(r);
-      loaded.push({ product: p, count: obj.records.length, updated_at: obj.updated_at || "" });
-    }
+  for (const pick of picks) {
+    const obj = await loadArchiveSales(pick.product);
+    if (!obj || !Array.isArray(obj.records) || !obj.records.length) continue;
+    const rng = salesDateRange(obj.records);
+    const total = obj.records.length;
+    // months === null → 全取；否则按月份筛（空数组 = 一条不取）
+    const recs = pick.months === null
+      ? obj.records
+      : filterRecordsByMonths(obj.records, pick.months);
+    if (!recs.length) continue;
+    for (const r of recs) out.push(r);
+    loaded.push({
+      product: pick.product, count: recs.length, total, updated_at: obj.updated_at || "",
+      months: pick.months, from: rng.from, to: rng.to,
+      rangeLabel: rng.label, displayName: rng.label ? `${pick.product} · ${rng.label}` : pick.product,
+    });
   }
   return { records: out, loaded };
 }
@@ -610,6 +808,9 @@ if (typeof window !== "undefined") {
     loadWorkbook, processFiles, detectFileType, desensitize, phoneDigits, patientKey, fmtDateTime,
     dedupSales, salesDedupKey,
     archiveSupported, loadArchiveSales, saveArchiveSales, listArchiveProducts,
-    removeArchiveSales, loadArchiveSalesFor };
+    removeArchiveSales, loadArchiveSalesFor, mergeArchiveRecords,
+    removeAllArchiveSales, loadAllArchiveRecords,
+    // 留档「品种名 + 销售时间起止」显示名 / 按月分段（供 UI 展示与按段筛选）
+    salesDateRange, archiveDisplayName, groupRecordsByMonth, filterRecordsByMonths };
 }
 })();

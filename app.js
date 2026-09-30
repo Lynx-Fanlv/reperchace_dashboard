@@ -1562,18 +1562,29 @@ $("#startBtn").onclick = async () => {
     //   · 只要**本次任一品种**在本地有历史就弹；本次品种全无历史 → 不弹，直接只算本次
     //   · 读取失败 / 数据被浏览器回收 → 静默当「无历史」，不打扰用户
     let picked = [];
+    let pickedSeg = null;   // 按时间段勾选时的 { product: [months] }，见 loadArchiveSalesFor
     if (P.archiveSupported()) {
       const archiveAll = await P.listArchiveProducts();
       const archiveNames = new Set(archiveAll.map(a => a.product));
       const nowHit = nowProducts.filter(p => archiveNames.has(p));
-      if (nowHit.length) picked = await askArchiveProducts(nowProducts, archiveAll, nowHit);
+      if (nowHit.length) {
+        const ans = await askArchiveProducts(nowProducts, archiveAll, nowHit);
+        picked = ans.products;
+        pickedSeg = ans.segments;
+      }
     }
 
-    // 取出所选品种的历史销售明细，与本次合并后**统一走去重**
+    // 取出所选品种的历史销售明细（可按月份段裁剪），与本次合并后**统一走去重**
     // （历史与本次重叠的行会被 dedupSales 自动去掉，剩下的正好是两边的不重复全集）
     let allSales = res.sales;
+    let arcLoaded = [];   // 实际并入的历史统计（供 dataInfo 回显）
     if (picked.length) {
-      const arc = await P.loadArchiveSalesFor(picked);
+      const spec = picked.map(p => ({
+        product: p,
+        months: (pickedSeg && pickedSeg.has(p)) ? pickedSeg.get(p) : null,
+      }));
+      const arc = await P.loadArchiveSalesFor(spec);
+      arcLoaded = arc.loaded;
       if (arc.records.length) allSales = res.sales.concat(arc.records);
     }
 
@@ -1583,14 +1594,14 @@ $("#startBtn").onclick = async () => {
     STORE.dedup = {
       total: dd.total, kept: dd.records.length, removed: dd.removedRows,
       groups: dd.groups, keptNoTicket: dd.keptNoTicket, removedRows: dd.removed,
-      archive: picked,
+      archive: arcLoaded.map(x => x.displayName || x.product),
     };
     STORE.sales = dd.records;
     STORE.followups = res.followups;
     STORE.cycles = res.cycles;
 
-    // 回写留档：按品种切分、整品种覆盖。写的是「历史+本次合并去重后」的完整集合，
-    // 因此下次再读就是全量，不必重复上传。
+    // 回写留档：按品种切分、**只增不删并入**（不会因为「本次只传了部分数据」而丢掉历史）。
+    // ⚠ 即使用户没勾「加载历史」也会写回 —— 那是「本次不从历史读」，与「本次要不要存」是两件事。
     if (P.archiveSupported() && dd.records.length) await saveArchiveByProduct(dd.records);
 
     // 回传数据回流（上一轮导出的「随访回传表」在本轮自动接续）
@@ -1598,7 +1609,10 @@ $("#startBtn").onclick = async () => {
     $("#board").classList.remove("hidden");
     $("#dataInfo").textContent =
       `销售明细 ${dd.records.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人` +
-      (picked.length ? ` · 已并入 ${picked.length} 个品种历史` : "") +
+      (arcLoaded.length
+        ? ` · 已并入历史：` + arcLoaded.map(x =>
+            `${x.product} ${x.months === null ? `全部${x.total}条` : `${x.count}/${x.total}条`}`).join("、")
+        : "") +
       (cb.nNote || cb.nReason ? ` · 已接续回传 ${cb.nNote} 条备注 / ${cb.nReason} 条原因` : "");
     renderDedupNotice();
     // 按数据实际出现的品种动态维护标准周期（内置值优先，新品种默认 30 天）
@@ -1622,9 +1636,10 @@ renderPendingList();
 
 /* ============ 本地留档（OPFS）============ */
 
-// 把去重后的销售记录按品种切分，整品种覆盖写回留档。
+// 把去重后的销售记录按品种切分，并入留档（**只增不删**，见 pipeline.js 的 saveArchiveSales 注释）。
 // 只写「本次数据里出现的品种」—— 未出现在本次数据里的品种，其历史留档原样保留
 //（否则用户只上传 A，会把 B 的留档误删）。
+// ⚠ 并入而非覆盖：只上传某品种的部分数据时，历史不会被这份部分数据挤掉。
 async function saveArchiveByProduct(records) {
   const byProd = new Map();
   for (const r of records) {
@@ -1637,33 +1652,125 @@ async function saveArchiveByProduct(records) {
   }
 }
 
-// 弹窗：问用户是否加载历史。返回被勾选的品种数组（空数组 = 不加载历史）。
+// 弹窗：问用户是否加载历史，并**可进一步按时间段挑选**。
+// 返回 { products: [...], segments: Map<product, months[]|null> }
+//   products 为空数组 = 不加载历史（segments 为空 Map）
+//   segments 里没有某品种 → 该品种全取（用户没展开细化）
+//   segments 里某品种 months 为 null → 全取；为 [] → 一条都不取（该品种实际会被跳过）
+//
 //   nowProducts —— 本次上传涉及的品种
-//   archiveAll  —— 本地留档全部品种 [{product,count,updated_at}]
+//   archiveAll  —— 本地留档全部品种 [{product,count,updated_at,displayName,rangeLabel,from,to}]
 //   nowHit      —— 本次品种中「本地有历史」的那些（默认勾选）
 function askArchiveProducts(nowProducts, archiveAll, nowHit) {
   return new Promise(resolve => {
     const mask = $("#arcMask");
     const hitSet = new Set(nowHit);
     const metaOf = new Map(archiveAll.map(a => [a.product, a]));
-    const checked = new Set(nowHit); // 默认勾选本次品种中本地有历史的那些
+    const checked = new Set(nowHit);          // 品种级勾选
+    const segChoice = new Map();              // product -> Set<month>（key "" 表示「未知日期」段）
+    const segOpen = new Set();                // 哪些品种展开了时间段面板
+    const segLoaded = new Map();              // product -> [{month,label,count}] 已读到的分段
 
     $("#arcTitle").textContent = `是否加载【${nowHit.join("、")}】的历史数据？`;
     $("#arcSub").innerHTML =
       "本地留档中已有这些品种的购药记录。勾选后会与本次上传合并计算（重复记录自动去除）；" +
-      "随访与用药周期仍以本次上传为准。";
+      "随访与用药周期仍以本次上传为准。<br>" +
+      "<span class=\"arc-hint\">需要只取一部分历史？点品种右侧的「选择时间段」。</span>";
+
+    // 某品种某段是否被勾选（未显式设置过 → 默认全选）
+    const segSet = (prod) => {
+      if (!segChoice.has(prod)) segChoice.set(prod, null); // null = 全选
+      return segChoice.get(prod);
+    };
+    // 该品种最终要加载的月份：全选 → null（=全取）
+    const segMonthsOf = (prod) => {
+      const s = segChoice.get(prod);
+      if (!s) return null;
+      return Array.from(s);
+    };
+
+    // 渲染「时间段」面板（按需读一次该品种的分段）
+    async function renderSeg(prod, box) {
+      if (!segLoaded.has(prod)) {
+        box.innerHTML = '<div class="arc-seg-loading">读取时间段…</div>';
+        const obj = await P.loadArchiveSales(prod);
+        const recs = (obj && Array.isArray(obj.records)) ? obj.records : [];
+        segLoaded.set(prod, P.groupRecordsByMonth(recs));
+      }
+      const segs = segLoaded.get(prod);
+      const sel = segSet(prod); // null = 全选
+      if (!segs.length) { box.innerHTML = '<div class="arc-seg-loading">该留档没有可解析的销售时间。</div>'; return; }
+      box.innerHTML =
+        `<div class="arc-seg-bar">` +
+          `<button class="arc-seg-btn" type="button" data-act="all">全选</button>` +
+          `<button class="arc-seg-btn" type="button" data-act="none">全不选</button>` +
+          `<span class="arc-seg-sum" data-sum="${esc(prod)}"></span>` +
+        `</div>` +
+        segs.map(s => {
+          const on = !sel || sel.has(s.month);
+          return `<label class="arc-seg"><input type="checkbox" data-seg="${esc(prod)}" ` +
+            `data-month="${esc(s.month)}"${on ? " checked" : ""}>` +
+            `<span class="arc-seg-name">${esc(s.label)}</span>` +
+            `<span class="arc-seg-cnt">${s.count} 条</span></label>`;
+        }).join("");
+
+      const sumEl = box.querySelector(`[data-sum]`);
+      const refreshSum = () => {
+        const s = segChoice.get(prod);
+        const picked = !s ? segs.reduce((n, x) => n + x.count, 0)
+                          : segs.filter(x => s.has(x.month)).reduce((n, x) => n + x.count, 0);
+        const all = segs.reduce((n, x) => n + x.count, 0);
+        if (sumEl) sumEl.textContent = picked === all
+          ? `已选全部 ${all} 条`
+          : `已选 ${picked} / ${all} 条`;
+      };
+      refreshSum();
+
+      box.querySelectorAll("input[data-seg]").forEach(cb => {
+        cb.onchange = () => {
+          const s = segSet(prod);
+          // 首次交互：由「全选(null)」物化成显式集合
+          const set = s ? s : new Set(segs.map(x => x.month));
+          if (cb.checked) set.add(cb.dataset.month); else set.delete(cb.dataset.month);
+          segChoice.set(prod, set);
+          refreshSum();
+        };
+      });
+      box.querySelectorAll("button[data-act]").forEach(btn => {
+        btn.onclick = () => {
+          if (btn.dataset.act === "all") segChoice.set(prod, null); // 回到「全取」
+          else segChoice.set(prod, new Set());
+          const s = segChoice.get(prod);
+          box.querySelectorAll("input[data-seg]").forEach(cb => {
+            cb.checked = !s || s.has(cb.dataset.month);
+          });
+          refreshSum();
+        };
+      });
+    }
+
+    // 渲染一个品种行（带「选择时间段」展开按钮）
+    // 品种名与时间段分开放：名字用品种名，时间段用小标签，避免长品种名把时间段挤掉。
+    function itemHtml(prod, meta, isNow) {
+      const name = meta.displayName || (meta.rangeLabel ? `${prod} · ${meta.rangeLabel}` : prod);
+      const span = meta.rangeLabel ? `<span class="arc-range">${esc(meta.rangeLabel)}</span>` : "";
+      return `<div class="arc-item" data-row="${esc(prod)}">` +
+        `<label class="arc-main">` +
+          `<input type="checkbox" data-prod="${esc(prod)}"${checked.has(prod) ? " checked" : ""}>` +
+          `<span class="arc-name" title="${esc(name)}">${esc(prod)}${span}</span>` +
+          (isNow ? `<span class="arc-tag">本次上传</span>` : "") +
+          `<span class="arc-meta">留档 ${meta.count || 0} 条 · ${esc(meta.updated_at || "")}</span>` +
+        `</label>` +
+        `<button class="arc-seg-open" type="button" data-open="${esc(prod)}">选择时间段</button>` +
+        `<div class="arc-seg-box hidden" data-box="${esc(prod)}"></div>` +
+      `</div>`;
+    }
 
     // 上半：本次上传的品种（有历史的可勾，默认勾上）
     const nowList = $("#arcListNow");
     const nowHas = nowProducts.filter(p => hitSet.has(p));
     if (nowHas.length) {
-      nowList.innerHTML = nowHas.map(p => {
-        const m = metaOf.get(p) || {};
-        return `<label class="arc-item"><input type="checkbox" data-prod="${esc(p)}" checked>` +
-          `<span class="arc-name">${esc(p)}</span>` +
-          `<span class="arc-tag">本次上传</span>` +
-          `<span class="arc-meta">留档 ${m.count || 0} 条 · ${esc(m.updated_at || "")}</span></label>`;
-      }).join("");
+      nowList.innerHTML = nowHas.map(p => itemHtml(p, metaOf.get(p) || {}, true)).join("");
       $("#arcSecNow").classList.remove("hidden");
       nowList.classList.remove("hidden");
     } else {
@@ -1676,11 +1783,7 @@ function askArchiveProducts(nowProducts, archiveAll, nowHit) {
     const olds = archiveAll.filter(a => !hitSet.has(a.product));
     const oldList = $("#arcListOld");
     if (olds.length) {
-      oldList.innerHTML = olds.map(a =>
-        `<label class="arc-item"><input type="checkbox" data-prod="${esc(a.product)}">` +
-        `<span class="arc-name">${esc(a.product)}</span>` +
-        `<span class="arc-meta">留档 ${a.count} 条 · ${esc(a.updated_at || "")}</span></label>`
-      ).join("");
+      oldList.innerHTML = olds.map(a => itemHtml(a.product, a, false)).join("");
       $("#arcSecOld").classList.remove("hidden");
       oldList.classList.remove("hidden");
     } else {
@@ -1689,11 +1792,31 @@ function askArchiveProducts(nowProducts, archiveAll, nowHit) {
       oldList.innerHTML = "";
     }
 
-    // 勾选态：本次区与历史区共用同一个 Set
+    // 品种勾选态：本次区与历史区共用同一个 Set
     mask.querySelectorAll("input[type=checkbox][data-prod]").forEach(cb => {
       cb.onchange = () => {
         if (cb.checked) checked.add(cb.dataset.prod);
         else checked.delete(cb.dataset.prod);
+      };
+    });
+
+    // 「选择时间段」展开/收起（首次展开时按需读该品种留档并渲染分段）
+    mask.querySelectorAll("button.arc-seg-open").forEach(btn => {
+      btn.onclick = async () => {
+        const prod = btn.dataset.open;
+        const box = mask.querySelector(`[data-box="${CSS.escape(prod)}"]`);
+        if (!box) return;
+        const open = !segOpen.has(prod);
+        if (open) {
+          segOpen.add(prod);
+          box.classList.remove("hidden");
+          btn.textContent = "收起时间段";
+          await renderSeg(prod, box);
+        } else {
+          segOpen.delete(prod);
+          box.classList.add("hidden");
+          btn.textContent = "选择时间段";
+        }
       };
     });
 
@@ -1703,10 +1826,141 @@ function askArchiveProducts(nowProducts, archiveAll, nowHit) {
       $("#arcSkip").onclick = null;
       resolve(result);
     };
-    $("#arcOk").onclick = () => close(Array.from(checked));
-    $("#arcSkip").onclick = () => close([]);
+    $("#arcOk").onclick = () => {
+      const prods = Array.from(checked);
+      const segments = new Map();
+      for (const p of prods) segments.set(p, segMonthsOf(p));
+      close({ products: prods, segments });
+    };
+    $("#arcSkip").onclick = () => close({ products: [], segments: new Map() });
     mask.classList.remove("hidden");
   });
+}
+
+/* ============ 本地留档管理器（查看 / 导出 / 删除） ============ */
+// 为什么需要它：留档写回已改为「只增不删」（避免只传部分数据时丢历史），
+// 代价是——若去重键抓不住某类差异（如数量 "1" vs "1.0"），这些行会逐轮累加。
+// 故必须给用户一条「看得见、能自己清」的通道，否则留档会悄悄变大而无人知晓。
+//
+// 说明：OPFS 是浏览器私有存储，磁盘上没有可直接打开的文件夹（浏览器刻意的隔离），
+// 因此这里提供「列出 + 导出备份 + 删除」作为等效能力。
+
+// 打开管理器：每次都重新拉一次留档清单，保证看到的是当下真实状态
+async function openArchiveManager() {
+  if (!P.archiveSupported()) {
+    alert("当前浏览器不支持本地留档（OPFS）。\n\n建议用 Chrome / Edge 打开；\n若是以 file:// 直接打开，部分浏览器会禁用存储能力。");
+    return;
+  }
+  const mask = $("#arcMgrMask");
+  mask.classList.remove("hidden");
+  await renderArchiveManager();
+}
+
+async function renderArchiveManager() {
+  const list = $("#arcMgrList"), empty = $("#arcMgrEmpty"), stat = $("#arcMgrStat");
+  if (!list) return;
+  list.innerHTML = '<div class="arc-empty">读取中…</div>';
+  if (empty) empty.classList.add("hidden");
+
+  let items = [];
+  try { items = await P.listArchiveProducts(); } catch (e) { items = []; }
+
+  const total = items.reduce((s, a) => s + (a.count || 0), 0);
+  if (stat) {
+    // 整体跨度：取各品种 from 的最小值 / to 的最大值
+    const froms = items.map(a => a.from).filter(Boolean).sort();
+    const tos = items.map(a => a.to).filter(Boolean).sort();
+    const overall = (froms.length && tos.length)
+      ? P.salesDateRange([{ sales_time: froms[0] }, { sales_time: tos[tos.length - 1] }]).label
+      : "";
+    stat.textContent = items.length
+      ? `共 ${items.length} 个品种 · ${total} 条销售记录` + (overall ? ` · 销售时间 ${overall}` : "")
+      : "";
+  }
+
+  if (!items.length) {
+    list.innerHTML = "";
+    if (empty) empty.classList.remove("hidden");
+    const ca = $("#arcMgrClearAll"); if (ca) ca.disabled = true;
+    const ex = $("#arcMgrExport"); if (ex) ex.disabled = true;
+    return;
+  }
+  const ca = $("#arcMgrClearAll"); if (ca) ca.disabled = false;
+  const ex = $("#arcMgrExport"); if (ex) ex.disabled = false;
+
+  list.innerHTML = items.map(a => {
+    // 显示名 = 「品种名 · 销售时间起止」（如 百泽安 · 25.1.1-26.3.4）；
+    // 目录名仍是品种名（改名会让用户已有的留档读不到），故这里只改展示。
+    const name = a.displayName || a.product;
+    const span = a.rangeLabel ? `<span class="arc-range">${esc(a.rangeLabel)}</span>` : "";
+    return `<div class="arc-item disabled" data-prod="${esc(a.product)}">` +
+      `<span class="arc-name" title="${esc(name)}">${esc(a.product)}${span}</span>` +
+      `<span class="arc-meta">${a.count || 0} 条 · ${esc(a.updated_at || "")}</span>` +
+      `<button class="arc-del" type="button" data-del="${esc(a.product)}" title="删除该品种的留档">删除</button>` +
+    `</div>`;
+  }).join("");
+
+  // 逐品种删除（二次确认，明确告知后果）
+  list.querySelectorAll("button.arc-del").forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const prod = btn.dataset.del;
+      const meta = items.find(x => x.product === prod) || {};
+      if (!confirm(`确定删除【${prod}】的本地留档？\n\n将移除 ${meta.count || 0} 条销售记录。\n` +
+                   `删除后下次上传该品种时需要重新上传完整数据。\n\n此操作不可撤销。`)) return;
+      btn.disabled = true;
+      btn.textContent = "删除中…";
+      const ok = await P.removeArchiveSales(prod);
+      if (!ok) { alert("删除失败：" + prod + "\n（可能该留档已被浏览器回收）"); }
+      await renderArchiveManager();
+    };
+  });
+}
+
+// 导出全部留档为一个 JSON 备份文件（供转移/留底；OPFS 无磁盘文件夹可拷）
+async function exportArchiveBackup() {
+  const btn = $("#arcMgrExport");
+  const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "导出中…"; }
+  try {
+    const all = await P.loadAllArchiveRecords();
+    if (!all.records.length) { alert("本地暂无留档可导出。"); return; }
+    const payload = {
+      kind: "repurchase_dashboard_archive",
+      version: 1,
+      exported_at: new Date().toISOString(),
+      products: all.products,
+      records: all.records,
+    };
+    // 文件名带上留档整体的销售时间跨度，便于在磁盘上就能认出这份备份覆盖的时段
+    const rg = P.salesDateRange(all.records);
+    const span = rg.label ? `_${rg.label}` : "";
+    const name = `本地留档备份${span}_${new Date().toISOString().slice(0, 10)}.json`;
+    download(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), name);
+  } catch (e) {
+    alert("导出失败：" + (e && e.message ? e.message : e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = old || "导出备份"; }
+  }
+}
+
+// 全部清空（二次确认，且要求输入确认以免误触）
+async function clearAllArchive() {
+  let items = [];
+  try { items = await P.listArchiveProducts(); } catch (e) { items = []; }
+  if (!items.length) { alert("本地暂无留档。"); return; }
+  const total = items.reduce((s, a) => s + (a.count || 0), 0);
+  const names = items.map(a => a.product).join("、");
+  if (!confirm(`确定清空全部本地留档？\n\n将删除 ${items.length} 个品种、共 ${total} 条销售记录：\n${names}\n\n` +
+               `清空后所有品种都需要重新上传完整数据。\n\n此操作不可撤销。`)) return;
+  // 二次确认：数量大时要求输入「清空」二字，避免误点
+  if (items.length >= 2 || total >= 100) {
+    const typed = prompt('为避免误操作，请输入「清空」二字确认：');
+    if (typed !== "清空") { return; }
+  }
+  const r = await P.removeAllArchiveSales();
+  alert(r.ok ? `已清空 ${r.removed} 个品种的留档。` : "清空失败，请重试。");
+  await renderArchiveManager();
 }
 
 /* ============ 销售明细去重提示条 ============ */
@@ -1937,6 +2191,23 @@ document.addEventListener("click", e => {
 /* ============ 表格视图微调控件（行高滑块 + 恢复默认） ============ */
 $("#rowH").addEventListener("input", e => setRowHeight(+e.target.value));
 $("#resetViewBtn").onclick = () => resetView();
+
+/* ============ 本地留档管理器 ============ */
+$("#archiveMgrBtn").onclick = () => openArchiveManager();
+$("#arcMgrClose").onclick = () => $("#arcMgrMask").classList.add("hidden");
+$("#arcMgrExport").onclick = () => exportArchiveBackup();
+$("#arcMgrClearAll").onclick = () => clearAllArchive();
+// 点遮罩空白处关闭（点面板内部不关）
+$("#arcMgrMask").addEventListener("click", e => {
+  if (e.target === $("#arcMgrMask")) $("#arcMgrMask").classList.add("hidden");
+});
+// Esc 关闭
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    const m = $("#arcMgrMask");
+    if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
+  }
+});
 
 // 脱敏开关：姓名 / 电话 / 医生（脱敏=默认，不脱敏=明文）
 function bindDesenToggle() {
@@ -2455,5 +2726,8 @@ function loadSnapshot(snap) {
 window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, ensureStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason, askSnapshotFams, snapshotFileName, doSnapshot,
   // 视图微调（列宽/行高）—— 导出供回归测试直接验边界夹取逻辑
   applyColWidth, clearColWidths, setRowHeight, resetView,
-  COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H };
+  COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H,
+  // 本地留档：管理器 + 弹窗（askArchiveProducts 导出供回归测试直接验「按时间段勾选」的返回值）
+  openArchiveManager, renderArchiveManager, exportArchiveBackup, clearAllArchive,
+  askArchiveProducts, saveArchiveByProduct };
 })();

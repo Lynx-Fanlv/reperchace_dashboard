@@ -386,6 +386,45 @@
   .arc-foot .btn{min-width:92px}
   .arc-foot .btn.ghost{background:#fff;color:var(--text);border:1px solid var(--line)}
   .arc-foot .btn.ghost:hover{border-color:var(--brand);color:var(--brand)}
+  /* 留档管理器：说明块 + 危险按钮 + 行内删除按钮 */
+  .arc-note{font-size:11px;color:var(--muted);line-height:1.65;background:#fafbfc;
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:12px}
+  .arc-foot .btn.ghost.danger{color:var(--bad);border-color:#f5c2c2}
+  .arc-foot .btn.ghost.danger:hover{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
+  .arc-item .arc-del{flex:0 0 auto;font-size:11px;padding:2px 9px;border-radius:6px;cursor:pointer;
+    background:#fff;border:1px solid var(--line);color:var(--muted)}
+  .arc-item .arc-del:hover{border-color:var(--bad);color:var(--bad);background:var(--bad-bg)}
+  .arc-item.disabled{opacity:.55;cursor:default}
+  .arc-item.disabled:hover{border-color:var(--line);background:none}
+  /* 留档「品种名 · 销售时间起止」中的时间段小标签。
+     ⚠ 用 ::before 出分隔点而不是把「·」写进 span 文本：HTML 会把 span 首尾空白折叠掉，
+     直接写文本会渲染成「百悦泽· 26.7.1」这种贴在一起的怪样子。 */
+  .arc-item .arc-range{flex:0 0 auto;font-size:10px;color:var(--blue);
+    background:rgba(59,91,219,.08);border-radius:4px;padding:1px 5px;margin-left:7px;
+    font-variant-numeric:tabular-nums}
+  .arc-item .arc-range::before{content:"\00a0·\00a0";color:var(--muted)}  /* 「按时间段勾选」：品种行改为两段式（勾选行 + 展开的时间段面板） */
+  .arc-item[data-row]{display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px 9px}
+  .arc-item[data-row]:hover{border-color:var(--line);background:none}
+  .arc-main{display:flex;align-items:center;gap:9px;min-width:0;cursor:pointer}
+  .arc-main input{flex:0 0 auto;cursor:pointer;margin:0}
+  .arc-seg-open{flex:0 0 auto;font-size:11px;padding:2px 9px;border-radius:6px;cursor:pointer;
+    background:#fff;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .arc-seg-open:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}
+  .arc-seg-box{grid-column:1 / -1;border-top:1px dashed var(--line);padding-top:8px;margin-top:2px}
+  .arc-seg-box.hidden{display:none}
+  .arc-seg-loading{font-size:11px;color:var(--muted);padding:2px 0}
+  .arc-seg-bar{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+  .arc-seg-btn{font-size:11px;padding:1px 8px;border-radius:6px;cursor:pointer;
+    background:#fff;border:1px solid var(--line);color:var(--muted)}
+  .arc-seg-btn:hover{border-color:var(--brand);color:var(--brand)}
+  .arc-seg-sum{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .arc-seg{display:flex;align-items:center;gap:8px;padding:3px 4px;border-radius:6px;
+    cursor:pointer;font-size:12px;color:var(--text)}
+  .arc-seg:hover{background:var(--brand-soft)}
+  .arc-seg input{flex:0 0 auto;cursor:pointer;margin:0}
+  .arc-seg-name{flex:1 1 auto}
+  .arc-seg-cnt{flex:0 0 auto;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .arc-hint{color:var(--muted)}
   /* 整体小结面板 */
   .summary-panel{margin-top:14px;background:var(--panel);border:1px solid var(--line);
     border-radius:12px;padding:14px 16px}
@@ -655,6 +694,7 @@
         <span class="vb-val" id="rowHVal">34px</span>
       </span>
       <button class="vb-btn" id="resetViewBtn" title="恢复默认列宽与行高">恢复默认</button>
+      <button class="vb-btn" id="archiveMgrBtn" title="查看 / 导出 / 清理本地留档的销售明细">本地留档</button>
       <span class="vb-hint">拖动表头右边缘可调列宽；本会话有效，刷新恢复默认</span>
     </div>
 
@@ -695,6 +735,32 @@
     <div class="arc-foot">
       <button class="btn ghost" id="arcSkip" type="button">不用历史</button>
       <button class="btn" id="arcOk" type="button">加载所选</button>
+    </div>
+  </div>
+</div>
+
+<!-- 本地留档管理器：查看有哪些品种、各自多少条，可导出备份 / 逐品种删除 / 全部清空 -->
+<div class="arc-mask hidden" id="arcMgrMask">
+  <div class="arc-box" role="dialog" aria-modal="true" aria-labelledby="arcMgrTitle">
+    <div class="arc-head">
+      <b id="arcMgrTitle">本地留档</b>
+      <div class="arc-sub" id="arcMgrSub">
+        销售明细按品种存在浏览器本地（下次上传可免重传）。留档只增不删，可在此清理。
+      </div>
+    </div>
+    <div class="arc-body">
+      <div class="arc-sec" id="arcMgrStat"></div>
+      <div class="arc-list" id="arcMgrList"></div>
+      <div class="arc-empty hidden" id="arcMgrEmpty">本地暂无留档。</div>
+      <div class="arc-note" id="arcMgrNote">
+        ⚠ 留档存在浏览器私有空间（OPFS），<b>磁盘上没有可双击打开的文件夹</b>。
+        如需备份或转移到别的电脑，请用「导出备份」下载成 JSON 文件。
+      </div>
+    </div>
+    <div class="arc-foot">
+      <button class="btn ghost" id="arcMgrExport" type="button" title="把全部留档下载成一个 JSON 文件">导出备份</button>
+      <button class="btn ghost danger" id="arcMgrClearAll" type="button" title="删除全部品种的留档">全部清空</button>
+      <button class="btn" id="arcMgrClose" type="button">关闭</button>
     </div>
   </div>
 </div>

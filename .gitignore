@@ -10,3 +10,8 @@ tests/_styled_test.xlsx
 # CDP 验收截图（每次运行都重新生成，不入库）
 tests/*_shot.png
 tests/_viewshot.png
+tests/_arc_range_*.png
+
+# CDP 验收用的样例数据（从本机下载目录临时拷入，跑完即删）
+_fixture_*.xlsx
+tests/_tmp_data/

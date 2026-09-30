@@ -15,6 +15,8 @@ const R = path.join(__dirname, "..");
 let pass = 0, fail = 0;
 const ok = (c, m) => { c ? pass++ : fail++; console.log((c ? "  ✅ " : "  ❌ ") + m); };
 const eq = (a, b, m) => ok(a === b, m + "  (得到 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + ")");
+// 跨 vm/Function 边界比较时先归一化原型（不同 realm 的 Array 原型不等）
+const J = (v) => JSON.parse(JSON.stringify(v));
 
 // ---------- 假 OPFS：实现 FileSystemDirectoryHandle 的最小可用子集 ----------
 function makeFakeOPFS() {
@@ -157,16 +159,23 @@ function loadPipeline(fake) {
     eq(r3.records.length, 0, "传空白品种名 → 不读历史（0 条）");
   }
 
-  console.log("\n===== [A6] 整品种覆盖：同一品种再存会替换而非追加 =====");
+  console.log("\n===== [A6] 只增不删并入：同一品种再存会并集而非覆盖 =====");
   {
     const fake = makeFakeOPFS();
     const P = loadPipeline(fake);
+    // 这 4 条都无小票号 → 不参与去重，全部保留（用于验证「不丢」）
     await P.saveArchiveSales("百泽安", [{ n: 1 }, { n: 2 }, { n: 3 }]);
     eq((await P.loadArchiveSales("百泽安")).records.length, 3, "先存 3 条");
+
     await P.saveArchiveSales("百泽安", [{ n: 9 }]);
     const back = await P.loadArchiveSales("百泽安");
-    eq(back.records.length, 1, "整品种覆盖 → 只剩 1 条（不是 3+1=4）");
-    eq(back.records[0].n, 9, "内容是新的那条");
+    eq(back.records.length, 4, "★ 只增不删并入 → 旧 3 + 新 1 = 4 条（历史不丢）");
+    eq(J(back.records.map(r => r.n)).join(","), "1,2,3,9", "★ 旧 3 条原样保留在前，新 1 条追加在后");
+    eq(back.records[3].n, 9, "新记录落在末尾");
+
+    // 再存一次「已存在的老数据」→ 无小票号一律追加（正是需要管理器手动清理的场景）
+    await P.saveArchiveSales("百泽安", [{ n: 1 }, { n: 2 }, { n: 3 }]);
+    eq((await P.loadArchiveSales("百泽安")).records.length, 7, "重复上传同批数据 → 7 条（无键行不去重，靠管理器清理）");
   }
 
   console.log("\n===== [A7] 假 OPFS 损坏时：读取失败静默为 null =====");
@@ -216,14 +225,17 @@ function loadPipeline(fake) {
     ok(/await P\.listArchiveProducts\(\)/.test(src), "分析流程调用了 listArchiveProducts");
     ok(/nowProducts\.filter\(p => archiveNames\.has\(p\)\)/.test(src),
       "只有「本次品种在本地有历史」时才算 nowHit（决定是否弹窗）");
-    ok(/if \(nowHit\.length\) picked = await askArchiveProducts\(/.test(src),
+    ok(/if \(nowHit\.length\) \{[\s\S]{0,120}askArchiveProducts\(/.test(src),
       "★ 关键：nowHit 非空才弹窗 —— 本次品种全无历史时不弹");
-    ok(/await P\.loadArchiveSalesFor\(picked\)/.test(src), "按勾选品种加载历史销售明细");
-    ok(/if \(picked\.length\)[\s\S]{0,120}loadArchiveSalesFor/.test(src),
+    ok(/const ans = await askArchiveProducts\(/.test(src), "弹窗返回值接在 ans 上（含 品种 + 分段）");
+    ok(/P\.loadArchiveSalesFor\(spec\)/.test(src), "按勾选品种（含月份段）加载历史销售明细");
+    ok(/if \(picked\.length\) \{[\s\S]{0,200}loadArchiveSalesFor\(spec\)/.test(src),
       "picked 为空时不调用加载（零副作用）");
+    ok(/const spec = picked\.map\(p => \(\{[\s\S]{0,200}months:/.test(src),
+      "★ 每个品种带上自己的 months 段（null=全取，数组=按段筛）");
 
     // 合并后统一去重
-    ok(/let allSales = res\.sales;[\s\S]{0,200}allSales = res\.sales\.concat\(arc\.records\)/.test(src),
+    ok(/let allSales = res\.sales;[\s\S]{0,400}allSales = res\.sales\.concat\(arc\.records\)/.test(src),
       "历史记录与本次合并进 allSales");
     ok(/const dd = P\.dedupSales\(allSales\)/.test(src),
       "★ 关键：去重作用于「本次+历史」的合并结果（重叠行自动去掉）");
@@ -240,18 +252,36 @@ function loadPipeline(fake) {
     const seg = src.slice(iFn, iFn + 700);
     ok(/if \(!r \|\| !r\.product\) continue;/.test(seg), "写留档时跳过无品种的记录");
     ok(/byProd\.get\(r\.product\)\.push\(r\)/.test(seg), "按品种分组后逐品种写入");
-    ok(!/removeArchiveSales/.test(src), "★ 不会删除未出现在本次数据里的品种留档（用户只传 A 不该删 B）");
+    // ★ 原断言是 `!/removeArchiveSales/.test(src)`（全文不得出现删除调用）—— 这是「宁粗勿错」的粗守卫。
+    //   现在留档管理器需要删除能力，故改为精确断言：**上传回写路径**不得删留档，
+    //   删除只能来自用户在管理器里的显式操作。
+    const upPath = src.slice(src.indexOf("async function saveArchiveByProduct"), src.indexOf("async function openArchiveManager"));
+    ok(!/removeArchiveSales|removeAllArchiveSales/.test(upPath),
+      "★ 上传回写路径不删除留档（只写不删；删除只能来自用户在管理器的显式操作）");
+    ok(/saveArchiveSales/.test(upPath), "上传回写路径只调 saveArchiveSales");
+    // 而删除能力确实存在，且在管理器里
+    const mgr = src.slice(src.indexOf("async function openArchiveManager"), src.indexOf("function renderDedupNotice"));
+    ok(/removeArchiveSales\(/.test(mgr), "管理器提供逐品种删除");
+    ok(/removeAllArchiveSales\(/.test(mgr), "管理器提供全部清空");
 
     // 弹窗交互
     ok(/function askArchiveProducts\(/.test(src), "存在 askArchiveProducts 弹窗函数");
     ok(/const checked = new Set\(nowHit\)/.test(src), "默认勾选 = 本次品种中有历史的那些");
     ok(/olds = archiveAll\.filter\(a => !hitSet\.has\(a\.product\)\)/.test(src),
       "下半区列的是「历史里的其他品种」（排除本次已有历史的）");
-    ok(/\$\("#arcOk"\)\.onclick = \(\) => close\(Array\.from\(checked\)\)/.test(src), "确定 → 返回勾选品种");
-    ok(/\$\("#arcSkip"\)\.onclick = \(\) => close\(\[\]\)/.test(src), "不用历史 → 返回空数组");
+    ok(/\$\("#arcOk"\)\.onclick = \(\) => \{[\s\S]{0,300}close\(\{ products: prods, segments \}\)/.test(src),
+      "确定 → 返回 { products, segments }（品种 + 各自的时间段）");
+    ok(/\$\("#arcSkip"\)\.onclick = \(\) => close\(\{ products: \[\], segments: new Map\(\) \}\)/.test(src),
+      "不用历史 → 返回空结果");
     ok(/\$\("#arcTitle"\)\.textContent = `是否加载【\$\{nowHit\.join\("、"\)\}】的历史数据？`/.test(src),
       "标题文案：是否加载【品种】的历史数据？");
-    ok(/data-prod="\$\{esc\(p\)\}"/.test(src), "品种写入 data-prod 时经 esc 转义");
+    ok(/data-prod="\$\{esc\(prod\)\}"\$\{checked\.has\(prod\) \? " checked" : ""\}/.test(src),
+      "品种写入 data-prod 时经 esc 转义");
+    // ★ 需求3：弹窗内可进一步按时间段挑选
+    ok(/button\.arc-seg-open/.test(src), "★ 每个品种行带「选择时间段」展开按钮");
+    ok(/P\.groupRecordsByMonth\(recs\)/.test(src), "★ 展开时按月份分段（groupRecordsByMonth）");
+    ok(/data-act="all"/.test(src) && /data-act="none"/.test(src), "★ 时间段面板含「全选 / 全不选」");
+    ok(/segMonthsOf\(p\)/.test(src), "★ 确定时把每个品种的所选月份一并带走");
     ok(/querySelectorAll\("input\[type=checkbox\]\[data-prod\]"\)/.test(src), "勾选态统一绑定");
 
     // 筛选：勾了历史品种才设筛选，否则清空（修掉残留 bug）
