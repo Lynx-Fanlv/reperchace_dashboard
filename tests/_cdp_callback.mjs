@@ -10,10 +10,17 @@ const path = require("path");
 
 const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const PORT = 9563;
-const PAGE = "file:///C:/Users/yym/WorkBuddy/2026-07-23-09-46-32/repurchase_dashboard/index.html";
+// 默认验本地多文件版；传参可改验线上单文件版：
+//   node tests/_cdp_callback.mjs https://lynx-fanlv.github.io/reperchace_dashboard/
+const PAGE = process.argv[2] ||
+  "file:///C:/Users/yym/WorkBuddy/2026-07-23-09-46-32/repurchase_dashboard/index.html";
+console.log("目标页面:", PAGE);
 
 const p = spawn(CHROME, ["--headless=new", "--disable-gpu", "--no-sandbox",
   "--window-size=1440,900",
+  // ⚠ 必须禁用缓存：user-data-dir 会跨次复用，Pages 上那个 2MB 单文件版一旦被缓存，
+  //   即使已重新发布，验到的仍是旧内容（实测踩到过）
+  "--disable-application-cache", "--disk-cache-size=1",
   "--remote-debugging-port=" + PORT,
   "--user-data-dir=C:/Users/yym/AppData/Local/Temp/cdp_cb",
   PAGE], { stdio: "ignore" });
@@ -40,6 +47,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ws.on("message", (m) => { const msg = JSON.parse(m.toString()); if (msg.id && pending.has(msg.id)) { pending.get(msg.id)(msg); pending.delete(msg.id); } });
   await new Promise((r) => ws.on("open", r));
   await send("Runtime.enable");
+  await send("Network.enable");
+  await send("Network.setCacheDisabled", { cacheDisabled: true });   // 同上：确保验到的是刚发布的内容
   // 等脚本就绪（不要用固定 sleep：多文件版也要等 vendor 脚本挂载完）
   for (let i = 0; i < 40; i++) {
     const r = await send("Runtime.evaluate", {

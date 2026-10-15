@@ -60,6 +60,35 @@ def git(args, inp=None, check=True):
     return r.stdout
 
 
+def authoritative_head():
+    """git fetch 不通时的兜底：用 api.github.com 取远端分支的权威 head。
+
+    为什么必须有这个兜底（2026-10-15 踩到）：github.com:443 在本机间歇不通，
+    而**本地 origin/gh-pages 常常落后于远端**（Pages 服务端会重建 commit，内容一致 SHA 不同）。
+    直接沿用陈旧 ref 会把新 commit 建在错误 parent 上 → 推送被拒 / 分叉。
+    实测：本地 origin/gh-pages=1171495，而权威远端已是 36d3fa7。
+    """
+    import json
+    import urllib.request
+    r = subprocess.run(["git", "credential", "fill"], input=b"protocol=https\nhost=github.com\n\n",
+                       capture_output=True)
+    token = ""
+    for line in r.stdout.decode("utf-8", "replace").split("\n"):
+        if line.startswith("password="):
+            token = line[9:].strip()
+    if not token:
+        return None
+    req = urllib.request.Request(
+        "https://api.github.com/repos/Lynx-Fanlv/reperchace_dashboard/git/ref/heads/" + BRANCH,
+        headers={"Authorization": "token " + token,
+                 "Accept": "application/vnd.github+json", "User-Agent": "ghpages-sync"})
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=30))["object"]["sha"]
+    except Exception as e:
+        print("  api 查询失败：%s" % str(e)[:120])
+        return None
+
+
 def main():
     # 0) 先 fetch，保证 origin/gh-pages 是远端最新
     #    （本机 gh-pages 本地 ref 常落后于远端，不 fetch 会把新 commit 建在旧 parent 上）
@@ -81,7 +110,20 @@ def main():
         if not have:
             print("✗ fetch 失败且本地无 origin/" + BRANCH + "，无法继续。")
             sys.exit(1)
-        print("⚠ fetch 全部失败，沿用已有 origin/%s —— 若远端刚被改过，parent 可能不是最新。" % BRANCH)
+        # 本地 ref 可能陈旧 → 用 API 取权威 head 并就地修正，否则 parent 会错
+        local = subprocess.run(["git", "rev-parse", "origin/" + BRANCH],
+                               capture_output=True).stdout.decode().strip()
+        print("⚠ fetch 全部失败，改用 api.github.com 取权威 head（本地 origin/%s=%s）"
+              % (BRANCH, local[:12]))
+        auth = authoritative_head()
+        if not auth:
+            print("⚠ 也取不到权威 head，只能沿用本地 ref —— 若远端刚被改过，parent 可能不是最新。")
+            print("  推送前请务必核对：node tests/_cdp_live_verify.mjs 或比对线上字节数。")
+        elif auth == local:
+            print("✓ 权威 head 与本地一致（%s），可继续" % auth[:12])
+        else:
+            print("★ 本地 ref 陈旧！已修正 origin/%s：%s → %s" % (BRANCH, local[:12], auth[:12]))
+            git(["update-ref", "refs/remotes/origin/" + BRANCH, auth])
 
     # 0.5) 发布前把关：内容来源必须是自包含的单文件版
     if not os.path.exists(SOURCE):
