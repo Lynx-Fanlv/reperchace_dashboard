@@ -2085,6 +2085,19 @@ function disp(r, key) {
 }
 // 手动备注的存储键（患者 × 品种）
 function noteKey(r) { return (r._key || "") + "::" + r.product; }
+// ⚠⚠ 患者键**绝不通过 HTML 属性传递**。
+// patientKey 用 \u0000 作姓名/电话分隔符，而 HTML 解析器会把属性里的 U+0000 替换成
+// U+FFFD（实测码点 0 → 65533），键往返必然失配 —— 表现为：
+//   · 填了「跟进备注」，点导出却说「当前筛选内没有可回传的内容」；
+//   · 点选「未购药原因」后不保留（存到一个永远读不回来的脏键上）。
+// 统一改为：DOM 只带行号（<tr data-idx>），事件里回查 DATA.rows 现算键。
+// （周期列一直用此法，见「周期列：点击 → 行内改为数字输入框」处的说明。）
+function rowByTr(el) {
+  const tr = el && el.closest ? el.closest("tr.data-row") : null;
+  if (!tr) return null;
+  const idx = Number(tr.dataset.idx);
+  return Number.isInteger(idx) && idx >= 0 ? (DATA.rows[idx] || null) : null;
+}
 
 /* ============ 周视图（状态判定的时间基准） ============ */
 // 参考日期：默认今天，可手动改（用于回看任意历史周的应购/购药情况）
@@ -2349,7 +2362,10 @@ function buildRows() {
       // 跨药房事实兜底：随访文本判定不出原因时，用客观事实预填「转渠道」
       // 优先级：人工点选 > 随访文本自动判定 > 跨药房事实
       if (!autoReason && pharmacyNote && treeKeys.includes("channel")) autoReason = "channel";
-      const reason = STORE.reasonOverrides[subKey] || autoReason; // 用户点选覆盖优先
+      // 人工点选覆盖优先。⚠ 用 hasOwnProperty 判定「有没有被人工点选过」，不能用真值判断：
+      // 点选「未标」存下的是空串，按真值判断会被 autoReason 顶掉 —— 表现为「选了未标又自己弹回自动原因」。
+      const reason = Object.prototype.hasOwnProperty.call(STORE.reasonOverrides, subKey)
+        ? STORE.reasonOverrides[subKey] : autoReason;
       let category, repurPart = "";
       if (purchasedInWeek) {
         category = "应回购"; repurPart = "应回已回";
@@ -2755,8 +2771,15 @@ function renderTable() {
     tb.innerHTML = rows.map((r, i) => rowHtml(r, start + i, cols)).join("");
   }
   // 手动备注列：输入即保存到 STORE.notes（快照时一并保存）
+  // 键在事件里回查（rowByTr），值用 property 赋值 —— 两者都不经 HTML 属性：
+  //   键含 \u0000 会失配（见 rowByTr 注释）；值里可能有引号，走 value="..." 会被截断。
   tb.querySelectorAll("input.note-input").forEach(inp => {
-    inp.addEventListener("input", () => { STORE.notes[inp.dataset.key] = inp.value; });
+    const r = rowByTr(inp);
+    if (r) inp.value = STORE.notes[noteKey(r)] || "";
+    inp.addEventListener("input", () => {
+      const rr = rowByTr(inp);
+      if (rr) STORE.notes[noteKey(rr)] = inp.value;
+    });
     inp.addEventListener("click", e => e.stopPropagation()); // 不触发行展开
   });
   // 未购药原因列：点击 → 行内展开层级 select 选择原因（快照模式只读）
@@ -2765,8 +2788,10 @@ function renderTable() {
       e.stopPropagation();
       const td = tag.parentNode;
       if (!td || SNAP_MODE) return;
-      const key = tag.dataset.key;
-      const cur = tag.dataset.reason || "";
+      const row = rowByTr(tag);
+      if (!row) return;
+      const key = noteKey(row);          // 现算键，不经 HTML 属性（含 \u0000 会失配）
+      const cur = row.reason || "";
       const tblWrap = document.querySelector(".tbl-wrap");
       const scrollTop = tblWrap ? tblWrap.scrollTop : 0;
       // 选项严格对齐小结第 2 行结构：无子类的顶层为平级选项；有子类的顶层作为分组标题，只列其子类
@@ -2780,7 +2805,7 @@ function renderTable() {
           kids.map(c => `<option value="${esc(c.key)}" ${cur === c.key ? "selected" : ""}>${esc(c.label)}</option>`).join("") +
           "</optgroup>";
       }).join("");
-      td.innerHTML = `<select class="reason-sel" data-key="${esc(key)}" data-cur="${esc(cur)}">
+      td.innerHTML = `<select class="reason-sel">
         <option value="">未标</option>${opts}</select>`;
       const sel = td.querySelector("select");
       // 一步点选：点击即展开；change 即保存；点其它处或 Esc 取消（不保存）
@@ -2790,7 +2815,9 @@ function renderTable() {
         if (closed) return;
         closed = true;
         document.removeEventListener("mousedown", onDoc);
-        if (saveVal) STORE.reasonOverrides[sel.dataset.key] = sel.value;
+        // 显式点选一律记入 reasonOverrides，**包括「未标」存下的空串**：
+        // 空串表示「人工判定为无原因」，必须能压过自动判定，否则选「未标」永远回弹成自动原因。
+        if (saveVal) STORE.reasonOverrides[key] = sel.value;
         refresh(); // 保持当前页码与筛选
         // 渲染完成后恢复列表滚动位置，避免跳回顶端
         setTimeout(() => { const w2 = document.querySelector(".tbl-wrap"); if (w2) w2.scrollTop = scrollTop; }, 0);
@@ -2938,7 +2965,9 @@ function rowHtml(r, idx, cols) {
       }
       const clickable = SNAP_MODE ? "" : " clickable";
       const title = SNAP_MODE ? "" : "title=\"点击标注未购药原因\"";
-      return `<td><span class="tag reason-tag${clickable}" data-key="${esc(noteKey(r))}" data-reason="${esc(r.reason || "")}" style="background:${color};cursor:${SNAP_MODE ? "default" : "pointer"}" ${title}>${esc(label)}</span></td>`;
+      // 不写 data-key / data-reason：键含 \u0000 会被 HTML 解析成 U+FFFD 而失配，
+      // 现算值改由事件侧 rowByTr(tag) 回查（见 renderTable 的绑定处）。
+      return `<td><span class="tag reason-tag${clickable}" style="background:${color};cursor:${SNAP_MODE ? "default" : "pointer"}" ${title}>${esc(label)}</span></td>`;
     }
     if (key === "pharmacy") {
       // 药房列：选中药房筛选时，若该患者已转到其他药房，附小字提示（完整语义见 title）
@@ -2965,9 +2994,9 @@ function rowHtml(r, idx, cols) {
     }
     if (key === "note") {
       if (!canNote) return `<td><span class="muted">—</span></td>`;
-      const k = noteKey(r);
-      const v = STORE.notes[k] || "";
-      return `<td><input class="note-input" data-key="${esc(k)}" value="${esc(v)}" placeholder="填写跟进备注" ${SNAP_MODE ? "disabled" : ""}></td>`;
+      // 不写 data-key（含 \u0000 会失配），初值也不写 value 属性：
+      // 备注内容可能含引号，走属性会被截断 —— 初值由 renderTable 绑定处用 property 赋值。
+      return `<td><input class="note-input" placeholder="填写跟进备注" ${SNAP_MODE ? "disabled" : ""}></td>`;
     }
     if (key === "fu_type") return `<td><div class="clip2">${esc(disp(r, key))}</div></td>`;
     if (key === "fu_signal") {
@@ -3467,7 +3496,11 @@ function applyCallbackRecords(followups) {
     const note = String(fu.callback_note || "").trim();
     if (note && !String(STORE.notes[nk] || "").trim()) { STORE.notes[nk] = note; nNote++; }
     const rk = reasonKeyFromLabel(fu.reason_label);
-    if (rk && !STORE.reasonOverrides[nk]) { STORE.reasonOverrides[nk] = rk; nReason++; }
+    // 同 line 的 reason 解析：用 hasOwnProperty 判「有没有被人工点选过」，
+    // 这样用户点选「未标」（空串）也算已有编辑，不会被导入的回传值盖掉。
+    if (rk && !Object.prototype.hasOwnProperty.call(STORE.reasonOverrides, nk)) {
+      STORE.reasonOverrides[nk] = rk; nReason++;
+    }
   }
   return { nNote, nReason };
 }

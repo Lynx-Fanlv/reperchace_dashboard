@@ -21,3 +21,6 @@ tests/_live_row_shot.png
 # CDP 验收用的样例数据（从本机下载目录临时拷入，跑完即删）
 _fixture_*.xlsx
 tests/_tmp_data/
+
+# 提交信息临时文件（提交后即删，不入库）
+_commit_msg.txt

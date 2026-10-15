@@ -780,7 +780,76 @@ repurchase_dashboard/
 
 **导出范围**：只导出「有填写」的行（填了跟进备注 或 点选过未购药原因），避免把整张名单变成随访记录污染随访池。
 
+### 8.1 ⚠️ 历史故障：患者键经 HTML 属性往返会被吞（已修）
+
+**症状（用户原话）**
+
+| 现象 | 根因同一 |
+|---|---|
+| 填了「跟进备注」→ 点导出 → 弹「**当前筛选内没有可回传的内容**」 | ✅ 同一个 |
+| 点选「未购药原因」→ **点选结果无法保留**（重新渲染即回弹） | ✅ 同一个 |
+
+**根因**：`Pipeline.patientKey(name, phone)` 用 **`\u0000`** 作姓名/电话分隔符（见第 310 行附近）。
+而**备注输入框**与**原因标签**当时把 `noteKey(r)`（= `_key + "::" + product`）写进了 `data-key` 属性：
+
+```js
+`<input class="note-input" data-key="${esc(noteKey(r))}" …>`   // ❌ 旧写法
+`<span class="reason-tag" data-key="${esc(noteKey(r))}" …>`    // ❌ 旧写法
+```
+
+**HTML 解析器会把属性值里的 U+0000 替换成 U+FFFD**（码点 `0 → 65533`，实测）。于是：
+
+```
+写入时（读 DOM）: STORE.notes["张三\uFFFD13800000111::百泽安"] = "已联系"   ← 脏键
+读取时（算键）  : STORE.notes["张三\u00001380000111::百泽安"]     → undefined
+                 → callbackRows() 命中 0 行 → 「没有可回传的内容」
+                 → 重算 r.reason 也查不到 → 点选不保留
+```
+
+引入时间：`35f6d1a`（患者身份从「单字段」改为「姓名+电话」）。**此前 `_key` 不含 NUL，所以一直是好的** ——
+这也是它躲过测试的原因：`tests/_test_callback.js` 用 stub DOM，且**直接写裸键**，从不经过 DOM 往返。
+
+**修法**（与周期列统一）：**患者级键绝不进 HTML 属性**，DOM 只带行号，事件里回查现算。
+
+```js
+// 1) <tr class="data-row" data-idx="${idx}"> 已是现成的锚点
+function rowByTr(el) {
+  const tr = el && el.closest ? el.closest("tr.data-row") : null;
+  if (!tr) return null;
+  const idx = Number(tr.dataset.idx);
+  return Number.isInteger(idx) && idx >= 0 ? (DATA.rows[idx] || null) : null;
+}
+// 2) 绑定处现算键；备注初值改用 property 赋值（内容可能含引号，走 value 属性会被截断）
+const r = rowByTr(inp); if (r) inp.value = STORE.notes[noteKey(r)] || "";
+inp.addEventListener("input", () => { const rr = rowByTr(inp); if (rr) STORE.notes[noteKey(rr)] = inp.value; });
+// 3) 原因标签同理；点选值按闭包里的 key 落库
+const row = rowByTr(tag); const key = noteKey(row); const cur = row.reason || "";
+```
+
+**同一处修掉的第二个缺陷**：`const reason = STORE.reasonOverrides[subKey] || autoReason` 用**真值**判断，
+而点选「未标」存的是空串 → 被 `autoReason` 顶掉，**「未标」永远回弹成自动原因**。
+改为 `Object.prototype.hasOwnProperty.call(STORE.reasonOverrides, subKey)` 判「有没有被人工点选过」。
+
+**一分钟定位法**（浏览器 F12 Console）：
+
+```js
+// 填一条备注后执行：键若是 \uFFFD（65533）就是本故障
+Object.keys(AppCore.STORE.notes)[0].split("").map(c => c.codePointAt(0)).filter(c => c > 4000)
+```
+
+**防回归**（三层，都别再删）：
+
+| 层 | 文件 | 覆盖 |
+|---|---|---|
+| 机制 + 源码/产物哨兵 | `tests/_test_nulkey.js`（23 项，**进全量回归**） | 属性往返 NUL→FFFD；`app.js` 里患者级键不得出现在属性表达式；三个行级模板不得带 data-key；产物已同步 |
+| 真实浏览器端到端 | `tests/_cdp_callback.mjs`（31 项） | 真实 `input` / `click` / `change` 事件走完整链路，含导出产出的 xlsx 内容核对 |
+| 既有 | `tests/_test_cycleedit_clip.js` | 周期列早已有此约束（本轮把另外两列补齐） |
+
+> 反向验证：把 `app.js` 换回修复前版本跑 `_cdp_callback.mjs` → **10 / 27**（失败项正是上面两个症状）；
+> 换回修复版 → **31 / 31**。
+
 ---
+
 
 ## 9. 隐私与合规
 
@@ -864,6 +933,9 @@ node tests/_test_weekrange.js    # 周截止日 / 参考日 / 周窗口
 node tests/_test_summary.js      # 整体小结与原因分类
 node tests/_test_export.js       # 导出内容与样式
 node tests/_test_callback.js     # 随访回传闭环（含导出→重新导入的端到端回环）
+                                 #   ⚠ 用 stub DOM 且直接写裸键 —— 只验口径与列结构，不覆盖真实填写路径
+node tests/_test_nulkey.js       # ★ 患者键（含 \u0000）不得经 HTML 属性往返（机制 + 源码/产物哨兵）
+node tests/_test_rowresize.js    # 行高左侧拖拽条 + 移除视图工具条 + 留档入口挪位
 node tests/_test_desentoggle.js  # 三组脱敏开关独立性
 node tests/_test_snapshot.js     # 快照剥离
 node tests/_test_snapshot_scope.js    # 快照品种范围 / 去小结 / 隐藏脱敏开关
@@ -921,11 +993,12 @@ node tests/_cdp_live_verify.mjs "<销售明细.xlsx>" "<随访.xls>"
 > ⚠️ 探针页必须基于**真 `index.html`** 派生：手写精简 DOM 会因 app.js 顶层 `$("#x").onclick = …`
 > 取到 null 抛错、整个 IIFE 中断，`window.AppCore` 不会挂载（mapping/pipeline 却能挂上，容易误判）。
 
-**当前状态**：`tests/` 下共 **38 个脚本**（28 个 `_test_*.js` 用例 + 1 个 `_verify_*.js` 核验 + 4 个 `_diag_*.js` 诊断
-+ 5 个浏览器/CDP 工具）。其中 **5 个依赖本机样例 Excel**（`_test_detect` / `_test_dyncycle` / `_test_e2e` /
+**当前状态**：`tests/` 下共 **41 个脚本**（29 个 `_test_*.js` 用例 + 1 个 `_verify_*.js` 核验 + 4 个 `_diag_*.js` 诊断
++ 7 个浏览器/CDP 工具）。其中 **5 个依赖本机样例 Excel**（`_test_detect` / `_test_dyncycle` / `_test_e2e` /
 `_test_render` / `_test_snapshot_filter`），缺文件时自动打印"跳过"并以 0 退出。
-**全量回归：31 个脚本全部 exit=0，0 项失败**（2026-09-30）。
-浏览器端：几何/交互验收 **22/22**、快照往返 **6/6**、留档端到端 **32/32**、留档时间段端到端 **34/34**、
+**全量回归：33 个脚本全部 exit=0，0 项失败**（2026-10-15；`_run_all.py` 已注入 `NODE_PATH` 以支持 jsdom 用例）。
+浏览器端：几何/交互验收 **61/61**、回传填写/点选端到端 **31/31**（`_cdp_callback.mjs`）、
+快照往返 **6/6**、留档端到端 **32/32**、留档时间段端到端 **34/34**、
 **线上发布形态验收通过**（修复后实测：`XLSX: object`、销售/随访均正确识别、表格 53 行）。
 
 **改动后的最低要求**：改到判定逻辑，至少跑 `_test_logic` / `_test_qtycycle` / `_test_summary`；
@@ -960,6 +1033,7 @@ node tests/_diag_data.js          # 看上传文件被识别成什么表、各�
 | 患者归并口径 | `_test_patient_key` |
 | 列表排版 / 周期列交互 | `_test_cycleedit_clip` + `_geom_run.mjs` |
 | 去重口径 | `_test_dedup` |
+| **随访回传 / 备注 / 未购药原因点选** | `_test_callback.js`（口径与列结构）**+ `_test_nulkey.js`（键往返哨兵）**+ `_cdp_callback.mjs`（真实浏览器端到端）**三个都要跑** |
 | 本地留档 | `_test_archive` + `_cdp_archive.mjs`（需真实浏览器） |
 | **构建 / 发布 / 两版产物** | `_test_release_shape.js` + `_test_archive_range.js`（`[C]` 段）**必跑**；发布后再跑 `_cdp_live_verify.mjs` 验证线上 |
 | 任何 `app.js` / `mapping.js` / `pipeline.js` 改动 | **必须重跑 `build.py` 与 `build.py --single`**，否则产物与源码不同步 |

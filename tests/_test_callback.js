@@ -1,4 +1,11 @@
 // 随访回传闭环验证：看板填写 → 导出「随访回传表」→ 重新导入 → 备注/原因自动接续
+//
+// ⚠ 本脚本用 stub DOM，且**直接写 ST.notes[keyA]（裸键）**——它只验「导出/导入的口径与列结构」，
+//    **不覆盖真实填写路径**。曾因此漏掉一个线上事故：患者键含 \u0000，经 HTML 属性往返被替换为
+//    U+FFFD，导致「填了备注但导出说没有可回传的内容」「点选未购药原因不保留」。
+//    补充覆盖见：
+//      · tests/_test_nulkey.js   —— 机制 + 源码/产物哨兵（进全量回归）
+//      · tests/_cdp_callback.mjs —— 真实浏览器端到端（真实 input/click/change 事件）
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require(path.join(__dirname, '..', 'vendor', 'exceljs.min.js'));
