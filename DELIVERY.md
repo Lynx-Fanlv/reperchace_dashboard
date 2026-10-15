@@ -1057,11 +1057,14 @@ git commit -m "……"
 git push origin main                              # 2. 推源码分支
 
 # 3. 同步单文件版到 gh-pages（Pages 的发布源）
-git worktree add .ghp-tmp gh-pages
-cp index.single.html .ghp-tmp/index.html
-cd .ghp-tmp && git add -A && git commit -m "同步单文件版（……）"
-cd .. && git worktree remove .ghp-tmp --force
-git push origin gh-pages                          # 4. 推送发布分支
+#    ⚠ 不要用 git worktree / checkout —— 本机历史上出现过 worktree/stash 误删目录，
+#      而 .git 一旦丢失恢复很麻烦。用 plumbing 脚本：不碰工作区，且自带两道发布守卫。
+python tests/_ghpages_sync.py                     # 会打印新 blob / tree / parent，供核对
+# 若 fetch 不通、脚本提示「本地 ref 陈旧」，先修正 parent 再同步：
+#   python tests/_ghpages_rebuild.py                # 用 api.github.com 取权威 head 重建提交
+
+# 4. 推送发布分支（本机 git push 的 credential helper 不可用，用 REST API 助手）
+node "C:/Users/yym/.workbuddy/tools/github-api-push.mjs" . gh-pages
 ```
 
 推送后 GitHub Pages 通常会自动重建。若没触发，手动触发一次：
@@ -1074,6 +1077,26 @@ curl -X POST -H "Authorization: token $TOKEN" \
 ```
 
 **验证发布**：`curl -sL https://lynx-fanlv.github.io/reperchace_dashboard/ | grep -c 'id="exportBtn"'`，或直接强刷（Ctrl+F5）看界面。
+
+**⚠️ 发布后必须核对字节数，别只看页面能不能打开**：
+
+```bash
+python -c "import urllib.request,hashlib;d=urllib.request.urlopen('https://lynx-fanlv.github.io/reperchace_dashboard/?cb=1').read();print(len(d),hashlib.md5(d).hexdigest())"
+python -c "import hashlib;d=open('index.single.html','rb').read().replace(b'\r\n',b'\n');print(len(d),hashlib.md5(d).hexdigest())"
+```
+两个 md5 必须一致。**CDN 有缓存（约 10 分钟）**，刚推送后线上仍是上一版是正常的 —— 不等它刷新就下结论会误判「修复没生效」。
+
+### 12.1.1 发布环节的两个坑（2026-10-15 实测）
+
+| 坑 | 症状 | 对策 |
+|---|---|---|
+| **本地 `origin/gh-pages` 陈旧** | `git fetch` 全程不通（`github.com:443` 间歇故障），脚本沿用陈旧 ref 造提交 → parent 与远端分叉、推送被拒 | `_ghpages_sync.py` 现会在 fetch 失败时用 **api.github.com** 取权威 head 并 `update-ref` 就地修正；也可单独跑 `_ghpages_rebuild.py` 重建 |
+| **浏览器缓存骗过验收** | CDP 用固定 `user-data-dir`，2MB 单文件版被缓存 → 已发布新版本，验收仍报旧行为 | 验收脚本已加 `--disable-application-cache` 与 `Network.setCacheDisabled`；或给 URL 加 `?cb=时间戳` |
+
+> 判断线上真实内容，**以字节数/md5 为准**，不要以「页面能打开」为准。
+> 本机另有一个无害但易困惑的现象：`index.single.html` 的工作区副本可能被 git 转成 CRLF
+> （比 LF 版多出「行数」个字节）。核对时先用 `.replace(b'\r\n', b'\n')` 归一，或直接比 `HEAD:index.single.html`。
+
 
 ### 12.2 自己部署一份（无仓库权限时）
 
