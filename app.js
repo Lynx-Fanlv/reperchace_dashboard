@@ -120,6 +120,9 @@ const $ = s => document.querySelector(s);
 
 /* ============ 工具 ============ */
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+// 放进 HTML 属性值（title="…" 等）时用这个：esc() 只管 & < >，不含引号 ——
+// 药房名/备注这类自由文本可能带引号，直接塞进属性会被截断（甚至逃逸出属性）。
+function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
 function fmtSize(n) {
   if (n < 1024) return n + " B";
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
@@ -845,7 +848,125 @@ function bindRowResizer() {
   });
 }
 
+/* ============ 购药记录浮窗（点击患者名 / 电话 / 会员号） ============ */
+// 口径（2026-10-16 与用户定稿）：
+//   ① 范围：**不受任何筛选影响** —— 基于 STORE.sales 全量明细（含已并入的本地留档）取该患者
+//      的全部购药记录。筛选回答的是「这次要看哪些人」，而点开患者看的是「他到底买过什么」，
+//      若跟着药房筛选走，会出现「同一个人在不同筛选下记录数变少」的困惑。
+//   ② 明细：**逐条原样列出**（同一天买多次就有多行），不做同日合并 —— 便于核对是否分次购买。
+//   ③ 分组：按品种分组，品种内按购药时间倒序；品种之间按各自最近一次购药时间倒序。
+//   ④ 列：购药时间 / 数量 / 药房（药房按用户要求带上 —— 可看出患者换过哪些药房购药）。
+//   ⑤ 快照模式：**不启用**。快照只内嵌聚合后的名单，不含销售明细（见 saveSnapshot），
+//      故行内不挂可点类名，点击不会有任何反应。
+// 识人键与列表完全一致：Pipeline.patientKey(姓名, 电话) = 姓名 + \u0000 + 电话数字。
+// ⚠ 该键同样不经 HTML 属性传递（含 \u0000 会被解析成 U+FFFD），点击时由 rowByTr 回查行对象现取。
+
+// 明细索引：一次遍历建全量索引，之后每次点击 O(1)。
+// 缓存以「数组对象本身」当版本号 —— 上传时是整表替换 STORE.sales（换数组即换版本，无需显式失效）。
+// ⚠ 别在这里写「整表替换」的那个赋值语句原文：_test_dedup.js 会用 indexOf 断言它的出现顺序，
+//   注释里的同名字面量会抢在真正的赋值之前被匹配到，导致哨兵误报。
+let PH_INDEX = { src: null, map: null };
+function purchIndex() {
+  if (PH_INDEX.src === STORE.sales && PH_INDEX.map) return PH_INDEX.map;
+  const map = new Map();
+  for (const s of STORE.sales) {
+    if (!s || !s.sales_time) continue;
+    const k = P.patientKey(s.patient_name, s.phone);
+    let info = map.get(k);
+    if (!info) { info = { name: "", phone: "", memberId: "", byFam: new Map() }; map.set(k, info); }
+    if (s.patient_name) info.name = s.patient_name;
+    if (s.phone) info.phone = s.phone;
+    if (s.member_id) info.memberId = s.member_id;
+    // 品种：取归一化后的品种（与列表「品种」列同一口径）；缺失时退回原始名，避免记录凭空消失
+    const fam = s.product || s.product_raw || "未知品种";
+    let list = info.byFam.get(fam);
+    if (!list) { list = []; info.byFam.set(fam, list); }
+    list.push(s);
+  }
+  PH_INDEX = { src: STORE.sales, map };
+  return map;
+}
+
+// 取某患者的购药记录（已分组、已排序），供浮窗渲染与测试直接调用
+function patientPurchases(key) {
+  const info = purchIndex().get(key);
+  if (!info) return { name: "", phone: "", memberId: "", groups: [], total: 0 };
+  const groups = [];
+  for (const [fam, rows] of info.byFam) {
+    // 时间倒序；同一天的多行保持销售明细里的原始先后（Array.sort 稳定）
+    rows.sort((a, b) => String(b.sales_time).localeCompare(String(a.sales_time)));
+    groups.push({ fam, rows, latest: String(rows[0].sales_time || "") });
+  }
+  groups.sort((a, b) => b.latest.localeCompare(a.latest) || a.fam.localeCompare(b.fam, "zh"));
+  return { name: info.name, phone: info.phone, memberId: info.memberId,
+    groups, total: groups.reduce((n, g) => n + g.rows.length, 0) };
+}
+
+function phHtml(info) {
+  const idOnly = state.maskMode === "id";
+  // 抬头身份：与列表同口径脱敏（姓名按「姓名/医生脱敏方式」，电话按电话开关）
+  const nameTxt = state.plainName ? (info.name || "未知")
+    : (idOnly ? (info.memberId || "—") : (maskName(info.name) || "未知"));
+  const phoneTxt = info.phone ? (state.plainPhone ? info.phone : maskPhone(info.phone)) : "—";
+  // 会员号仅在「仅会员号」模式下补显 —— 其它模式下列表与导出都不呈现它，浮窗里露出来等于绕过脱敏
+  const idTxt = (idOnly && info.memberId) ? `　<span class="ph-muted">会员号 ${esc(info.memberId)}</span>` : "";
+  const head = `<div class="ph-head">` +
+    `<div class="ph-title">${esc(nameTxt)}　<span class="ph-muted">${esc(phoneTxt)}</span>${idTxt}</div>` +
+    `<div class="ph-sub">共 <b>${info.total}</b> 次购药 · <b>${info.groups.length}</b> 个品种` +
+    `　<span class="ph-muted">分品种 · 按购药时间倒序</span></div>` +
+    `</div>`;
+  if (!info.total) return head + `<div class="ph-empty">没有找到该患者的购药记录</div>`;
+  const cols = `<div class="ph-cols"><span>购药时间</span><span class="ph-qty">数量</span><span>药房</span></div>`;
+  const body = info.groups.map(g => {
+    const rows = g.rows.map(s => {
+      const ph = String(s.pharmacy || "未知");
+      const qty = String(s.qty == null ? "" : s.qty).trim() || "—";
+      return `<div class="ph-row">` +
+        `<span>${esc(s.sales_time || "")}</span>` +
+        `<span class="ph-qty">${esc(qty)}</span>` +
+        `<span class="ph-ph" title="${escAttr(ph)}">${esc(ph)}</span>` +
+        `</div>`;
+    }).join("");
+    return `<div class="ph-grp">` +
+      `<div class="ph-grp-h"><span>${esc(g.fam)}</span>` +
+      `<span class="ph-grp-meta">最近 ${esc(g.latest)} · ${g.rows.length} 次</span></div>` +
+      rows + `</div>`;
+  }).join("");
+  return head + `<div class="ph-body">${cols}${body}</div>`;
+}
+
+let PH_ANCHOR = null; // 当前浮窗锚定的单元格（再次点击同一格 = 关闭）
+function closePurchPop() {
+  const p = $("#phPop");
+  if (p) { p.classList.add("hidden"); p.innerHTML = ""; }
+  PH_ANCHOR = null;
+}
+function openPurchPop(anchorEl, row) {
+  const pop = $("#phPop");
+  if (!pop || !row) return;
+  pop.innerHTML = phHtml(patientPurchases(row._key));
+  // 先放到屏幕外再显示：浮窗自身是 display:none，隐藏时量不到宽高，只能先显示后测量再定位
+  pop.style.left = "-9999px";
+  pop.style.top = "0";
+  pop.classList.remove("hidden");
+  // 定位：贴在所点单元格正下方；下方空间不足则翻到上方；左右夹取在视口内
+  const a = anchorEl.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  const pad = 8;
+  let left = a.left;
+  if (left + w > window.innerWidth - pad) left = window.innerWidth - pad - w;
+  if (left < pad) left = pad;
+  let top = a.bottom + 6;
+  if (top + h > window.innerHeight - pad) top = a.top - h - 6;
+  if (top < pad) top = pad;
+  pop.style.left = Math.round(left) + "px";
+  pop.style.top = Math.round(top) + "px";
+  PH_ANCHOR = anchorEl;
+}
+
 function renderTable() {
+  // 表格重建会让浮窗的锚点单元格变成游离节点（位置失效），先收起
+  closePurchPop();
   const cols = visibleCols();
   const total = DATA.rows.length;
   const pages = Math.max(1, Math.ceil(total / state.pageSize));
@@ -1000,6 +1121,17 @@ function renderTable() {
       else el.classList.add("clip1");
     });
   });
+  // 患者名 / 电话（「仅会员号」模式下患者列显示会员号）：点击就地弹出该患者全部购药记录。
+  // 键由 rowByTr 回查行对象现取（不经 HTML 属性 —— 含 \u0000 会被解析成 U+FFFD）。
+  // stopPropagation：避免同时触发行展开；再次点同一格则关闭（切换）。
+  tb.querySelectorAll("tr.data-row .p-link").forEach(el => {
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      if (PH_ANCHOR === el) { closePurchPop(); return; }
+      const row = rowByTr(el);
+      if (row) openPurchPop(el, row);
+    });
+  });
   renderPagination(total);
   // 表格滚动条回到顶端（不滚动页面，避免用户被带回顶部上传区）
   const tblWrap = document.querySelector(".tbl-wrap");
@@ -1100,6 +1232,16 @@ function rowHtml(r, idx, cols) {
       // 不写 data-key（含 \u0000 会失配），初值也不写 value 属性：
       // 备注内容可能含引号，走属性会被截断 —— 初值由 renderTable 绑定处用 property 赋值。
       return `<td><input class="note-input" placeholder="填写跟进备注" ${SNAP_MODE ? "disabled" : ""}></td>`;
+    }
+    if (key === "patient_name" || key === "phone") {
+      // 患者名 / 电话 → 点击就地弹出该患者的全部购药记录。
+      // （「仅会员号」模式下患者列显示的就是会员号，所以这里一并覆盖了「点会员号」。）
+      // 不挂 .clip-x：姓名/电话都短，不需要「点击展开全文」；两列点击语义统一为打开浮窗。
+      // 不写 data-key：患者键含 \u0000，HTML 属性里会被替换成 U+FFFD 而失配（见 rowByTr 注释）。
+      const txt = String(disp(r, key) || "");
+      if (!txt) return `<td></td>`;
+      if (SNAP_MODE) return `<td><span>${esc(txt)}</span></td>`; // 快照不含明细，不给可点提示
+      return `<td><span class="p-link" title="点击查看该患者全部购药记录">${esc(txt)}</span></td>`;
     }
     if (key === "fu_type") return `<td><div class="clip2">${esc(disp(r, key))}</div></td>`;
     if (key === "fu_signal") {
@@ -2228,6 +2370,16 @@ function closeAllPopovers() {
   document.querySelectorAll(".ms-panel:not(.hidden)").forEach(p => p.classList.add("hidden"));
   $("#colPanel").classList.add("hidden");
 }
+// 购药记录浮窗的收起时机：点浮窗外部、表格滚动（锚点跟着滚走，留着会错位）、Esc、以及表格重建。
+// 用 mousedown 而非 click：在「点别处开始新一轮选择」时就收起，避免与其它弹层的开合打架。
+// 点 .p-link 本身不在这里收 —— 交给它的 click 处理（支持再次点击同一格关闭）。
+document.addEventListener("mousedown", e => {
+  if (e.target.closest && (e.target.closest("#phPop") || e.target.closest(".p-link"))) return;
+  closePurchPop();
+});
+document.addEventListener("scroll", e => {
+  if (e.target === document || (e.target.closest && e.target.closest(".tbl-wrap"))) closePurchPop();
+}, true); // 捕获阶段：scroll 不冒泡，必须用捕获才收得到 .tbl-wrap 的滚动
 function togglePanel(panel) {
   const open = !panel.classList.contains("hidden");
   closeAllPopovers();
@@ -2274,9 +2426,10 @@ $("#arcMgrClearAll").onclick = () => clearAllArchive();
 $("#arcMgrMask").addEventListener("click", e => {
   if (e.target === $("#arcMgrMask")) $("#arcMgrMask").classList.add("hidden");
 });
-// Esc 关闭
+// Esc 关闭（留档管理器 / 购药记录浮窗）
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
+    closePurchPop();
     const m = $("#arcMgrMask");
     if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
   }
@@ -2804,5 +2957,7 @@ window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, 
   COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H,
   // 本地留档：管理器 + 弹窗（askArchiveProducts 导出供回归测试直接验「按时间段勾选」的返回值）
   openArchiveManager, renderArchiveManager, exportArchiveBackup, clearAllArchive,
-  askArchiveProducts, saveArchiveByProduct };
+  askArchiveProducts, saveArchiveByProduct,
+  // 购药记录浮窗：patientPurchases 导出供回归测试直接验「分组 / 倒序 / 不受筛选影响」
+  patientPurchases, phHtml, openPurchPop, closePurchPop };
 })();

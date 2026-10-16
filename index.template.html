@@ -283,6 +283,38 @@
   .expand-box .eb-row{display:flex;gap:6px;align-items:baseline;padding:1px 0}
   .expand-box .eb-lbl{flex:0 0 auto}
   .expand-box .eb-val{flex:1 1 auto;word-break:break-word}
+  /* 患者名 / 电话（「仅会员号」模式下患者列显示的就是会员号）→ 可点击查看该患者全部购药记录。
+     平时不加下划线（密集表格里会显得很吵），靠手型光标 + 悬停变色提示可点。 */
+  td .p-link{cursor:pointer}
+  td .p-link:hover{color:var(--brand);text-decoration:underline;text-underline-offset:2px}
+  /* 购药记录浮窗：点击患者名/电话/会员号后就地弹出（快照模式下不启用，见 app.js） */
+  /* max-width 定在 480px：浮窗宽度本就随内容自适应（药房名越长越宽），
+     上限给太大时一旦数据里有个超长药房名，整窗会被撑到上限、右侧留一大片空白。
+     480px ≈ 时间列 92 + 数量列 58 + 药房列约 280 + 间距 20 + 内边距 26，
+     足够放下常见药房全名（更长的走省略号，悬停 title 看全文）。 */
+  .ph-pop{position:fixed;z-index:1500;min-width:300px;max-width:min(480px,calc(100vw - 20px));
+    max-height:min(58vh,420px);background:#fff;border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 14px 36px rgba(15,23,42,.2);display:flex;flex-direction:column;overflow:hidden}
+  .ph-pop.hidden{display:none}
+  .ph-head{padding:10px 13px 8px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .ph-title{font-size:13px;font-weight:600;color:var(--text);line-height:1.5}
+  .ph-muted{color:var(--muted);font-weight:400}
+  .ph-sub{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.6}
+  .ph-sub b{color:var(--brand)}
+  .ph-body{overflow:auto;flex:1 1 auto;padding-bottom:6px}
+  .ph-cols,.ph-row{display:grid;grid-template-columns:92px 58px minmax(0,1fr);gap:10px;align-items:baseline}
+  .ph-cols{position:sticky;top:0;z-index:1;background:#fff;padding:6px 13px 4px;
+    font-size:11px;color:var(--muted);border-bottom:1px solid var(--line)}
+  .ph-grp-h{display:flex;align-items:baseline;gap:8px;padding:6px 13px 5px;background:#f7f9fc;
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    font-size:12px;font-weight:600;color:var(--brand)}
+  .ph-grp-meta{margin-left:auto;font-size:11px;color:var(--muted);font-weight:400;
+    font-variant-numeric:tabular-nums}
+  .ph-row{padding:4px 13px;font-size:12px;color:var(--text);font-variant-numeric:tabular-nums}
+  .ph-row:hover{background:#fafbfc}
+  .ph-qty{text-align:right}
+  .ph-ph{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+  .ph-empty{padding:9px 13px;font-size:12px;color:var(--muted)}
   .tag{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap;color:#fff}
   /* 品种标签：限宽 + 单行省略，超长药品名不再撑开列宽（完整名称见悬停提示 / 展开行） */
   .tag-prod{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;background:var(--brand-soft);
@@ -729,6 +761,10 @@
     <div class="txt" id="loadingTxt">正在处理…</div>
   </div>
 </div>
+
+<!-- 购药记录浮窗：点击列表里的患者名 / 电话 / 会员号后就地弹出，呈现该患者的全部购药记录。
+     内容由 app.js 的 openPurchPop() 填充（position:fixed，锚定所点单元格）。 -->
+<div class="ph-pop hidden" id="phPop" role="dialog" aria-label="购药记录"></div>
 
 <!-- 本地留档加载确认：本次品种默认勾选，历史里的其他品种可点选加入 -->
 <div class="arc-mask hidden" id="arcMask">
