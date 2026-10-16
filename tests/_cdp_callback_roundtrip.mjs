@@ -77,25 +77,67 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   };
   const ready = async () => {
     for (let i = 0; i < 50; i++) {
-      if (await evalJS("!!(window.AppCore&&window.Pipeline&&window.Mapping&&window.XLSX&&window.ExcelJS)")) return true;
+      if (await evalJS("!!(window.AppCore&&window.Pipeline&&window.Mapping&&window.XLSX&&window.ExcelJS)")) {
+        // 采集弹窗文案（不拦下来就完全看不到失败原因）；同时避免 CDP 弹窗把页面卡住
+        await evalJS(`(() => { if (!window.__alerts) { window.__alerts = [];
+          window.alert = m => window.__alerts.push(String(m)); } return 1; })()`);
+        return true;
+      }
       await sleep(300);
     }
     return false;
   };
   // 走真实文件输入框（模拟用户把文件拖进来；一次一个，与用户实际操作一致）
   const uploadFile = async (absPath) => {
+    const before = await evalJS(`document.querySelectorAll("#pendingList .file-chip").length`);
     const doc = await send("DOM.getDocument");
     const q = await send("DOM.querySelector", { nodeId: doc.result.root.nodeId, selector: "#allInput" });
     await send("DOM.setFileInputFiles", { nodeId: q.result.nodeId, files: [absPath] });
     await evalJS(`document.querySelector("#allInput").dispatchEvent(new Event("change",{bubbles:true})); "ok"`);
-    await sleep(600);
+    // 等这一份真的进了「已选文件」列表再继续（线上加载慢，固定 sleep 会偶发漏文件）
+    for (let i = 0; i < 40; i++) {
+      const n = await evalJS(`document.querySelectorAll("#pendingList .file-chip").length`);
+      if (n > before) break;
+      await sleep(250);
+    }
+  };
+  // 本地留档（OPFS）会在「本次品种在本地有历史」时弹窗询问是否加载历史 ——
+  // ⚠️ 线上（https）OPFS 可用，第 2 轮再传同一品种就会弹；本地 file:// 下 OPFS 不可用所以不弹，
+  //    这正是本脚本「本地过、线上挂」的原因。这里选「不用历史」，聚焦回传回流本身。
+  const dismissArchiveIfAny = async () => {
+    for (let i = 0; i < 40; i++) {
+      const vis = await evalJS(`(() => { const m = document.querySelector("#arcMask");
+        return !!m && !m.classList.contains("hidden"); })()`);
+      if (vis) {
+        const t = await evalJS(`(document.querySelector("#arcTitle")||{}).textContent||""`);
+        log("  ⚠ 弹出本地留档询问（" + JSON.stringify(t) + "）→ 点「不用历史」");
+        await evalJS(`document.querySelector("#arcSkip").click(); "ok"`);
+        return true;
+      }
+      await sleep(250);
+    }
+    return false;
   };
   const startAnalysis = async () => {
     await evalJS(`document.querySelector("#startBtn").click(); "clicked"`);
+    // 弹窗可能紧跟在点击之后出现，先给它一点时间
+    await sleep(500);
+    await dismissArchiveIfAny();
     for (let i = 0; i < 60; i++) {
       if (await evalJS(`!document.querySelector("#board").classList.contains("hidden")`)) return true;
+      await dismissArchiveIfAny();
       await sleep(400);
     }
+    const diag = await evalJS(`(() => ({
+      alerts: window.__alerts || [],
+      chips: [...document.querySelectorAll("#pendingList .file-chip")].map(e => e.textContent.trim()),
+      loading: (document.querySelector("#loading .txt") || {}).textContent || "",
+      loadingHidden: !document.querySelector("#loading") || document.querySelector("#loading").classList.contains("hidden"),
+      arcOpen: !!document.querySelector("#arcMask") && !document.querySelector("#arcMask").classList.contains("hidden"),
+      sales: window.AppCore.STORE.sales.length, fus: window.AppCore.STORE.followups.length,
+      startDisabled: !!document.querySelector("#startBtn").disabled,
+    }))()`);
+    log("  ⚠ 看板未出现，现场诊断 = " + JSON.stringify(diag));
     return false;
   };
 
