@@ -7,6 +7,9 @@ Thumbs.db
 
 # 测试临时输出
 tests/_styled_test.xlsx
+# 回环验收的中间产物（每跑一次都重新生成：导出落盘的 xlsx + 两轮截图）
+tests/_cb_roundtrip_export.xlsx
+tests/_cb_roundtrip_shot_*.png
 # CDP 验收截图（每次运行都重新生成，不入库）
 tests/*_shot.png
 tests/*_shot2.png

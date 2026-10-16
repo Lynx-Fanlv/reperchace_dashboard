@@ -2381,6 +2381,31 @@ function buildRows() {
   };
   const fuDate = fu => P.datePart(fu.exec_time) || P.datePart(fu.plan_time) || null;
 
+  // 回传记录判定：服务摘要 =「跟进回传」（见文件末尾 CB_SUMMARY_TYPE 的说明）。
+  // 回传表不是真实随访任务，只是「用户在看板里填的备注 / 未购药原因」的载体，
+  // **不含任何随访信号字段**（用药状态 / 是否按时购药 / 停药原因…）。
+  const isCallbackFu = fu => String(fu.summary_type || "").trim() === CB_SUMMARY_TYPE;
+
+  // 从「该患者」的候选随访里挑最合适的一条：应购药日前最近一次；若都在其后则取最早一条。
+  // 同品种优先；同品种无候选时退回全部候选。无可用日期 → null（宁可不匹配也不乱配）。
+  function pickMatchedFu(cands, fam, dueDate) {
+    if (!cands.length) return null;
+    const sameFam = cands.filter(f => f.product === fam);
+    let pool = sameFam.length ? sameFam : cands;
+    // 优先已执行的随访（有执行时间或任务已完成），避免未执行任务污染匹配
+    const executed = pool.filter(f => f.exec_time || (f.task_status && f.task_status.includes("已完成")));
+    if (executed.length) pool = executed;
+    const withDate = pool.map(f => ({ f, d: fuDate(f) })).filter(x => x.d);
+    if (!withDate.length) return null;
+    const before = withDate.filter(x => x.d <= dueDate);
+    if (before.length) {
+      before.sort((a, b) => b.d.localeCompare(a.d)); // 最近一次在前
+      return before[0].f;
+    }
+    withDate.sort((a, b) => a.d.localeCompare(b.d)); // 之后最早
+    return withDate[0].f;
+  }
+
   // ---- 逐患者×品种计算 ----
   const rows = [];
   const today = todayStr();
@@ -2429,25 +2454,12 @@ function buildRows() {
       }
 
       // 匹配随访：优先应购药日前最近一次（同品种；优先「已完成/有执行时间」的真实随访）
-      let matched = null;
-      if (fus.length) {
-        const sameFam = fus.filter(f => f.product === fam);
-        let pool = sameFam.length ? sameFam : fus;
-        // 优先已执行的随访（有执行时间或任务已完成），避免未执行任务污染匹配
-        const executed = pool.filter(f => f.exec_time || (f.task_status && f.task_status.includes("已完成")));
-        if (executed.length) pool = executed;
-        const withDate = pool.map(f => ({ f, d: fuDate(f) })).filter(x => x.d);
-        if (withDate.length) {
-          const before = withDate.filter(x => x.d <= dueDate);
-          if (before.length) {
-            before.sort((a, b) => b.d.localeCompare(a.d)); // 最近一次在前
-            matched = before[0].f;
-          } else {
-            withDate.sort((a, b) => a.d.localeCompare(b.d)); // 之后最早
-            matched = withDate[0].f;
-          }
-        }
-      }
+      // ⚠ 回传记录**只作兜底，绝不顶掉真实随访**：它不带任何随访信号字段，一旦被选中，
+      //   界面会变成 随访类型=跟进回传 / 随访时间=导出当天 / 随访信号=空 —— 真实随访判定被整条冲掉
+      //   （表现为「回传表传回来后，患者状态和随访信息没填上，反而被清空了」）。
+      //   仅当该患者**没有任何真实随访**时，才用回传记录兜底 —— 它的「随访小结」列即上一轮原记录。
+      const matched = pickMatchedFu(fus.filter(f => !isCallbackFu(f)), fam, dueDate)
+                   || pickMatchedFu(fus.filter(isCallbackFu), fam, dueDate);
 
       // 状态判定（周维度，购药事实优先）：
       //  当周有购药记录 → 应回购·应回已回（最优先：本周该买也买了 / 提前买都算）
@@ -4701,7 +4713,8 @@ async function doExportCallback() {
     `已导出 ${rows.length} 条跟进回传记录。\n\n` +
     "下次分析时，把该文件与销售/随访/周期表一起上传即可：\n" +
     "· 跟进备注会回填到「跟进备注」列（仍可编辑）\n" +
-    "· 未购药原因等同人工点选\n\n" +
+    "· 未购药原因等同人工点选\n" +
+    "· 该表只是你填写内容的载体，不会替代随访任务，也不会影响随访判定\n\n" +
     "⚠️ 该表含明文姓名与电话，请仅在团队内部流转。"
   );
 }
