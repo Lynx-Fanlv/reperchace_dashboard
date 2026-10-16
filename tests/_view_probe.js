@@ -26,7 +26,7 @@
   A.state.stdCycle = {}; A.state.stdCycle[LONG_PROD] = 21; A.state.stdCycle[SHORT_PROD] = 21;
   A.state.cycleAlgo = 'reset'; A.state.refDate = '2026-09-20'; A.state.weekSel = 'all';
   A.state.page = 1; A.state.pageSize = 50;
-  A.ensureStdCycles([LONG_PROD, SHORT_PROD]);
+  A.syncStdCycles([LONG_PROD, SHORT_PROD]);
   document.getElementById('board').classList.remove('hidden');
   await A.refresh();
   await new Promise(r => setTimeout(r, 400));

@@ -52,14 +52,59 @@ function assert(cond, msg) {
   // mapping 层内置定义仍在（作为默认值来源，但不预填界面）
   assert(M.PRODUCT_FAMILIES.some(p => p.family === '百泽安' && p.stdCycle === 21), 'mapping 内置定义保留（百泽安21）');
 
-  // ---------- ② ensureStdCycles：只补数据出现品种，未出现的不写入 ----------
-  console.log('\n===== ② ensureStdCycles 只补数据品种 =====');
-  App.ensureStdCycles(['百泽安', '索托克拉', '某新药X']);
+  // ---------- ② syncStdCycles 首次：补数据出现品种，未出现的不写入 ----------
+  console.log('\n===== ② syncStdCycles 首次：只补数据品种 =====');
+  App.syncStdCycles(['百泽安', '索托克拉', '某新药X']);
   assert(App.state.stdCycle['百泽安'] === 21, '百泽安补内置 21');
   assert(App.state.stdCycle['索托克拉'] === 28, '索托克拉补内置 28');
   assert(App.state.stdCycle['某新药X'] === 30, '新品种默认 30');
   assert(App.state.stdCycle['百悦泽'] == null, '未出现的百悦泽 不写入');
   assert(Object.keys(App.state.stdCycle).sort().join(',') === '某新药X,百泽安,索托克拉', '仅出现品种存在');
+
+  // ---------- ②a 换批次：先清后补（2026-10-16 用户报障的回归哨兵） ----------
+  // 「只补不清」会让上一批的品种永久留在周期窗口里：传过 百泽安+百悦泽 之后再传只有 索托克拉，
+  // 窗口会同时挂着三个 → 用户看到「我根本没上传这两个品，怎么还在这儿」。
+  console.log('\n===== ②a 换批次：不在本次数据里的品种必须清掉 =====');
+  const cycleInputsHtml = () => elStore['cycleInputs'].innerHTML;
+  // 先摆出「上一批」的样子：百泽安(内置21)、百悦泽(内置28)，并把百悦泽人工改成 35
+  App.syncStdCycles(['百泽安', '百悦泽']);
+  App.state.stdCycle['百悦泽'] = 35;
+  App.state.qtyScale['百悦泽'] = true;          // 该品种勾了「按数量」
+  App.state.qtyScale['百泽安'] = true;
+  assert(App.state.stdCycle['百悦泽'] === 35, '前置：人工把百悦泽改成 35');
+  // 换批次：本次只有 索托克拉
+  App.syncStdCycles(['索托克拉']);
+  assert(App.state.stdCycle['百泽安'] == null, '★ 换批次后 百泽安 被清掉（含内置值）');
+  assert(App.state.stdCycle['百悦泽'] == null, '★ 换批次后 百悦泽 被清掉（连人工改的 35 一起）');
+  assert(App.state.qtyScale['百悦泽'] == null, '★ 未出现品种的「按数量」开关一起清掉');
+  assert(App.state.qtyScale['百泽安'] == null, '★ 同上（百泽安）');
+  assert(App.state.stdCycle['索托克拉'] === 28, '本次品种 索托克拉 正常补上 28');
+  assert(Object.keys(App.state.stdCycle).join(',') === '索托克拉', '窗口集合 == 本次数据品种集合');
+  App.renderCycleInputs();
+  assert(!cycleInputsHtml().includes('百泽安') && !cycleInputsHtml().includes('百悦泽'),
+    '★ 渲染出的周期窗口里没有未上传的品种');
+
+  // ---------- ②b 仍在数据里的品种：人工改过的值要保留（别被重置成内置默认） ----------
+  console.log('\n===== ②b 仍在数据里的品种：人工改过的值保留 =====');
+  App.syncStdCycles(['索托克拉']);
+  App.state.stdCycle['索托克拉'] = 42;
+  App.state.qtyScale['索托克拉'] = true;
+  App.syncStdCycles(['索托克拉', '新加品种Y']);
+  assert(App.state.stdCycle['索托克拉'] === 42, '★ 仍在数据里 → 人工改的 42 保留（没被重置回 28）');
+  assert(App.state.qtyScale['索托克拉'] === true, '★ 「按数量」开关保留');
+  assert(App.state.stdCycle['新加品种Y'] === 30, '新出现的品种补默认 30');
+
+  // ---------- ②c 清空全部：品种级设置一并清零（没有数据就没有品种） ----------
+  console.log('\n===== ②c 清空全部 → 品种级设置清零 =====');
+  App.syncStdCycles([]);
+  assert(Object.keys(App.state.stdCycle).length === 0, '★ stdCycle 清空');
+  assert(Object.keys(App.state.qtyScale).length === 0, '★ qtyScale 清空');
+  App.renderCycleInputs();
+  assert(cycleInputsHtml().includes('按数据中的品种自动生成'), '★ 窗口回到「开始分析后按数据中的品种自动生成」提示');
+
+  // 复位到后续用例需要的状态
+  App.state.stdCycle = {}; App.state.qtyScale = {};
+  App.syncStdCycles(['百泽安', '索托克拉', '某新药X']);
 
   // ---------- ③ renderCycleInputs 只渲染出现品种 ----------
   console.log('\n===== ③ 渲染只含数据品种 =====');
@@ -119,7 +164,7 @@ function assert(cond, msg) {
     console.log('  [真实数据] 销售明细出现品种:', realProducts.join(' / '));
     App.STORE.sales = res.sales; App.STORE.followups = res.followups; App.STORE.cycles = res.cycles;
     App.state.stdCycle = {};
-    App.ensureStdCycles(realProducts);
+    App.syncStdCycles(realProducts);
     for (const fam of realProducts) {
       assert(App.state.stdCycle[fam] != null, `品种「${fam}」已有标准周期 ${App.state.stdCycle[fam]} 天`);
     }

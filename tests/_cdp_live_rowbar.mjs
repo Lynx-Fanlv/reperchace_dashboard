@@ -110,7 +110,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     A.state.stdCycle = { '百泽安': 21 };
     A.state.cycleAlgo = 'reset'; A.state.refDate = '2026-09-20'; A.state.weekSel = 'all';
     A.state.page = 1; A.state.pageSize = 50;
-    A.ensureStdCycles(['百泽安']);
+    A.syncStdCycles(['百泽安']);
     document.getElementById('board').classList.remove('hidden');
     return A.refresh().then(() => new Promise(r => setTimeout(r, 800))).then(() => {
       const t = document.getElementById('dataTable');

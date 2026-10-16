@@ -48,7 +48,7 @@ const P = global.Pipeline, App = global.AppCore;
 
   App.STORE.sales = res.sales; App.STORE.followups = res.followups; App.STORE.cycles = res.cycles;
   App.state.stdCycle = {};
-  App.ensureStdCycles([...new Set(res.sales.map(s => s.product))]);
+  App.syncStdCycles([...new Set(res.sales.map(s => s.product))]);
   App.state.start = null; App.state.end = null; App.state.advance = 7;
   const rows = App.buildRows();
   console.log('\n[名单] 行数:', rows.length);

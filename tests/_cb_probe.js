@@ -37,7 +37,7 @@
   S.cycleAlgo = "reset"; S.refDate = "2026-09-20"; S.weekSel = "this";
   S.page = 1; S.pageSize = 50;
   S.hiddenCols = new Set();
-  A.ensureStdCycles([PROD]);
+  A.syncStdCycles([PROD]);
   document.getElementById("board").classList.remove("hidden");
   await A.refresh();
   A.renderTable();

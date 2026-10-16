@@ -79,7 +79,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     A.state.stdCycle={}; prods.forEach(p=>A.state.stdCycle[p]=21);
     A.state.cycleAlgo='reset'; A.state.refDate='2026-09-20'; A.state.weekSel='all';
     A.state.page=1; A.state.pageSize=50;
-    A.ensureStdCycles(prods);
+    A.syncStdCycles(prods);
     A.refresh();
     window.scrollTo(0, 700);
     const t=t=document.getElementById('dataTable');
