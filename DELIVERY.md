@@ -675,8 +675,19 @@ repurchase_dashboard/
    键**绝不写进 HTML 属性**（`patientKey` 含 `\u0000`，属性往返会被替换成 `U+FFFD` → 见 8.1）。
 2. **明细分页外的患者也能查到**：索引建在 `STORE.sales` 上，与当前页无关。
    索引以「数组对象本身」当版本号（上传时整表替换 `STORE.sales`），换数组即自动重建，点击 O(1)。
-3. **定位**：贴所点单元格正下方；下方空间不足则翻到**上方**（翻上后底边不压住所点的行）；
-   左右夹取在视口内。浮窗是 `position:fixed`，不参与页面布局。
+3. **定位（三段式，最后一段不可省）**：贴所点单元格正下方 → 下方放不下则翻到**上方**
+   （翻上后底边不压住所点的行）→ **仍放不下就直接夹进视口**。浮窗是 `position:fixed`，不参与页面布局。
+
+**定位的坑：只做「贴下 + 翻上」是不够的**（2026-10-16 真实上传链路验收抓出）：
+
+锚点**本身**就可能在视口外 —— 自动化点击没滚进视口、窗口很矮、点击后页面又滚了。
+此时「贴下」和「翻上」算出来都在视口外，实测浮窗跑到 `y=3264` 处（视口高仅 749），
+**用户完全看不见**，而且没有任何报错。所以在翻上之后必须再加一道
+`if (top > maxT) top = maxT;`（配 `if (top < pad) top = pad;`），
+保证「**无论锚点在哪，浮窗都完整可见**」。
+
+> 同源的横向逻辑也一并写成了 `if (left > maxL) left = maxL;` —— 原来写的是
+> `if (left + w > innerWidth - pad)`，等价但和纵向不成对，容易被后来人改漏。
 
 **样式上的两个坑**：
 
@@ -688,9 +699,16 @@ repurchase_dashboard/
   个超长药房名，整窗会被撑到上限、右侧留一大片空白。480px ≈ 时间列 92 + 数量列 58 +
   药房列约 280 + 间距 20 + 内边距 26。
 
-> 验收：`tests/_test_purchhist.js`（**82 项**：聚合口径 / 真实点击链路 / 脱敏 / 快照 / 产物防线）
-> + `tests/_cdp_purchhist.mjs`（**43 项**真实浏览器：定位与翻转、max-height 与内部滚动、
-> 列表头吸顶、三列对齐、长文本省略、四种收起时机、与行展开互不干扰）。
+> 验收三层：
+> `tests/_test_purchhist.js`（**82 项** jsdom：聚合口径 / 真实点击链路 / 脱敏 / 快照 / 产物防线）
+> + `tests/_cdp_purchhist.mjs`（**46 项**真实浏览器：定位与翻转、**锚点在视口外仍夹进视口**、
+> max-height 与内部滚动、表头吸顶、三列对齐、长文本省略、四种收起时机、与行展开互不干扰）
+> + `tests/_cdp_purchhist_real.mjs`（**19 项**，**走真实上传链路**：`DOM.setFileInputFiles` 传
+> `_fixture_sales_query.xlsx` → 识别 → 去重 → 建行 → 点患者名，再把浮窗渲染结果与
+> `patientPurchases()` 逐条 JSON 比对）。
+>
+> ⚠ 第三层不是冗余：合成数据那层（`_ph_probe.js`）的点是脚本自己 `scrollIntoView` 的，
+> **锚点永远在视口内**，所以「视口外跑飞」这个 bug 只有真实链路那层才暴露出来。
 
 ### 6.6 整体小结
 
@@ -995,6 +1013,7 @@ node tests/_test_archive_range.js     # 留档「品种名+销售起止」显示
 node tests/_test_days_color.js        # 「距今」列三色着色（单行/色类/CSS 变量/导出字体同源）
 node tests/_test_release_shape.js     # ★ 发布形态哨兵：单文件版必须自包含（不得引用 vendor/、须内联 SheetJS、>1MB）
                                       #   以及 _ghpages_sync.py 的 SOURCE 必须是 index.single.html
+node tests/_test_purchhist.js         # ★ 购药记录浮窗（聚合口径 / jsdom 真实点击链路 / 脱敏 / 快照 / 产物防线，82 项）
 node tests/_run_all.py                # 一键跑完 tests/_test_*.js 全部用例（Windows 友好，无需 shell 循环）
 # 其余同理，全部跑一遍：
 for f in tests/_test_*.js; do node "$f" || echo "FAIL $f"; done
@@ -1030,10 +1049,16 @@ node tests/_cdp_archive_range.mjs "<含多月数据的.xlsx>"
 #   （2026-09-30 线上「全部未识别」故障的回归哨兵，见第 14 节 FAQ）
 node tests/_cdp_live_verify.mjs "<销售明细.xlsx>" "<随访.xls>"
 
-# 购药记录浮窗：定位/翻转、max-height 与内部滚动、列表头吸顶、三列对齐、长文本省略、
-#   四种收起时机、与行展开互不干扰（默认截图 tests/_ph_shot.png）
-node tests/_cdp_purchhist.mjs                       # 本地版
+# 购药记录浮窗：定位/翻转、锚点在视口外仍夹进视口、max-height 与内部滚动、列表头吸顶、
+#   三列对齐、长文本省略、四种收起时机、与行展开互不干扰（默认截图 tests/_ph_shot.png）
+node tests/_cdp_purchhist.mjs                       # 本地版（46 项）
 node tests/_cdp_purchhist.mjs "<线上URL>"           # 线上版
+
+# ★ 购药记录浮窗「真实上传链路」验收：传 _fixture_sales_query.xlsx → 识别 → 去重 → 建行 →
+#   点患者名，再把浮窗渲染结果与 patientPurchases() 逐条 JSON 比对（19 项，截图 _ph_real_shot.png）
+#   ⚠️ 前提：仓库根目录存在 _fixture_sales_query.xlsx（gitignore，需从本机样例拷入）
+#   ⚠️ 这层不可省：合成数据那层的锚点永远在视口内，只有真实链路才验得出「视口外跑飞」
+node tests/_cdp_purchhist_real.mjs
 ```
 
 > `ws` 不在本项目内，用 `NODE_PATH` 指向装了它的 `node_modules` 再跑。
@@ -1043,12 +1068,14 @@ node tests/_cdp_purchhist.mjs "<线上URL>"           # 线上版
 > ⚠️ 探针页必须基于**真 `index.html`** 派生：手写精简 DOM 会因 app.js 顶层 `$("#x").onclick = …`
 > 取到 null 抛错、整个 IIFE 中断，`window.AppCore` 不会挂载（mapping/pipeline 却能挂上，容易误判）。
 
-**当前状态**：`tests/` 下共 **42 个脚本**（30 个 `_test_*.js` 用例 + 1 个 `_verify_*.js` 核验 + 4 个 `_diag_*.js` 诊断
-+ 8 个浏览器/CDP 工具）。其中 **5 个依赖本机样例 Excel**（`_test_detect` / `_test_dyncycle` / `_test_e2e` /
+**当前状态**：`tests/` 下共 **63 个脚本**（34 个 `_test_*.js` 用例 + 1 个 `_verify_*.js` 核验 + 5 个 `_diag_*.js` 诊断
++ 13 个浏览器/CDP 工具 `.mjs` + 7 个注入用探针 `_*_probe.js` + 3 个 Python 发布/批量脚本）。
+其中 **5 个 `_test_*.js` 依赖本机样例 Excel**（`_test_detect` / `_test_dyncycle` / `_test_e2e` /
 `_test_render` / `_test_snapshot_filter`），缺文件时自动打印"跳过"并以 0 退出。
 **全量回归：34 个脚本全部 exit=0，0 项失败**（2026-10-16；`_run_all.py` 已注入 `NODE_PATH` 以支持 jsdom 用例）。
 浏览器端：几何/交互验收 **61/61**、回传填写/点选端到端 **31/31**（`_cdp_callback.mjs`）、
-**购药记录浮窗 43/43**（`_cdp_purchhist.mjs`）、快照往返 **6/6**、留档端到端 **32/32**、留档时间段端到端 **34/34**、
+**购药记录浮窗 46/46**（`_cdp_purchhist.mjs`）+ **真实上传链路 19/19**（`_cdp_purchhist_real.mjs`）、
+快照往返 **6/6**、留档端到端 **32/32**、留档时间段端到端 **34/34**、
 **线上发布形态验收通过**（修复后实测：`XLSX: object`、销售/随访均正确识别、表格 53 行）。
 
 > ⚠️ 写 jsdom/CDP 探针时的一个必踩坑：**`#board` 的显隐是在「上传完成」回调里显式设的
@@ -1090,7 +1117,7 @@ node tests/_diag_data.js          # 看上传文件被识别成什么表、各�
 | 去重口径 | `_test_dedup` |
 | **随访回传 / 备注 / 未购药原因点选** | `_test_callback.js`（口径与列结构）**+ `_test_nulkey.js`（键往返哨兵）**+ `_cdp_callback.mjs`（真实浏览器端到端）**三个都要跑** |
 | 本地留档 | `_test_archive` + `_cdp_archive.mjs`（需真实浏览器） |
-| **购药记录浮窗（点患者名/电话）** | `_test_purchhist.js` + `_cdp_purchhist.mjs`（需真实浏览器，验定位/翻转/滚动）**两个都要跑** |
+| **购药记录浮窗（点患者名/电话）** | `_test_purchhist.js` + `_cdp_purchhist.mjs`（需真实浏览器，验定位/翻转/滚动）**两个都要跑**；改到**定位算法**再加 `_cdp_purchhist_real.mjs`（真实上传链路，验锚点在视口外的情况） |
 | **构建 / 发布 / 两版产物** | `_test_release_shape.js` + `_test_archive_range.js`（`[C]` 段）**必跑**；发布后再跑 `_cdp_live_verify.mjs` 验证线上 |
 | 任何 `app.js` / `mapping.js` / `pipeline.js` 改动 | **必须重跑 `build.py` 与 `build.py --single`**，否则产物与源码不同步 |
 
@@ -1236,6 +1263,10 @@ python -c "import hashlib;d=open('index.single.html','rb').read().replace(b'\r\n
 ② 列宽被拖得很窄、名字被省略号盖住，点到的是旁边的空隙（点文字本身即可）；
 ③ 打开的是旧构建产物（改了模板/`app.js` 要重跑 `build.py`）。
 另外浮窗打开时，**滚动表格会把它收起**（锚点滚走会错位）——这是有意的。
+
+> 若浮窗**弹了但跑到屏幕外看不见**（离点击处很远、或要滚动才找得到），说明是
+> 2026-10-16 之前构建的产物 —— 那时定位只做了「贴下 + 翻上」，锚点本身在视口外时会算飞。
+> 现在补了「夹进视口」兜底，重跑 `build.py` 即可（见 6.5.5）。
 
 **Q：浮窗里的记录数比列表上的「数量」多？**
 正常，两者口径**有意不同**：列表的「最近购药 / 数量」只算**当前筛选范围内**的记录

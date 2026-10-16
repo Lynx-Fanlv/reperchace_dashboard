@@ -2882,15 +2882,20 @@ function openPurchPop(anchorEl, row) {
   pop.style.left = "-9999px";
   pop.style.top = "0";
   pop.classList.remove("hidden");
-  // 定位：贴在所点单元格正下方；下方空间不足则翻到上方；左右夹取在视口内
+  // 定位：贴在所点单元格正下方；下方空间不足则翻到上方；最后一律夹进视口。
+  // ⚠ 最后那道「夹进视口」的兜底不能省：锚点本身也可能在视口外（自动化点击、窗口很矮、
+  //   点击后页面又滚了），此时贴下和翻上都会落在视口外 —— 实测锚点在页面下方时浮窗跑到
+  //   y=3264 处，用户完全看不见。夹取保证「无论锚点在哪，浮窗都完整可见」。
   const a = anchorEl.getBoundingClientRect();
   const w = pop.offsetWidth, h = pop.offsetHeight;
   const pad = 8;
+  const maxL = window.innerWidth - pad - w, maxT = window.innerHeight - pad - h;
   let left = a.left;
-  if (left + w > window.innerWidth - pad) left = window.innerWidth - pad - w;
+  if (left > maxL) left = maxL;
   if (left < pad) left = pad;
   let top = a.bottom + 6;
-  if (top + h > window.innerHeight - pad) top = a.top - h - 6;
+  if (top > maxT) top = a.top - h - 6;   // 下方放不下 → 翻到上方
+  if (top > maxT) top = maxT;            // 上方也放不下 → 直接夹进视口（锚点多半在视口外）
   if (top < pad) top = pad;
   pop.style.left = Math.round(left) + "px";
   pop.style.top = Math.round(top) + "px";

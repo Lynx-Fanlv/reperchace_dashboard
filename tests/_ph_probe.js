@@ -202,11 +202,33 @@
   ok(pop.classList.contains("hidden"), "点非患者列不会打开浮窗");
   ok(document.querySelectorAll("#tbody tr.expand-row").length === 1, "点其它列仍正常展开行（原行为未破坏）");
 
-  /* ---------- [7] 截图 ---------- */
-  log("\n=== [7] 截图 ===");
-  document.querySelectorAll("#tbody tr.expand-row").forEach(e => e.remove());
-  first2.click();
+  /* ---------- [7] 锚点在视口外时，浮窗仍须完整可见 ---------- */
+  // 真实场景：自动化点击、窗口很矮、或点击后页面又滚了 —— 此时「贴下」和「翻上」都会落到视口外。
+  // 必须有一道「夹进视口」的兜底，否则浮窗虽然打开了却看不见（实测跑到 y=3264）。
+  log("\n=== [7] 锚点在视口外 → 浮窗仍夹进视口 ===");
+  A.closePurchPop();
+  window.scrollTo(0, 0);                 // 回到页顶，把表格滚出视口
+  await sleep(300);
+  const offLink = pick("诸**风");
+  const offR = rect(offLink);
+  log("  锚点 top=" + Math.round(offR.t) + "，视口高 " + VH);
+  ok(offR.t > VH, "锚点确实已在视口下方（top " + Math.round(offR.t) + " > " + VH + "）");
+  offLink.click();
   await sleep(250);
+  pr = rect(pop);
+  log("  浮窗 top=" + Math.round(pr.t) + " / bottom=" + Math.round(pr.b) + " / 高 " + Math.round(pr.h));
+  ok(pr.t >= -1 && pr.b <= VH + 1, "★ 浮窗被夹进视口，用户仍看得到（未被甩到视口外）");
+  ok(!pop.classList.contains("hidden"), "浮窗确实是打开状态（不是靠没渲染来蒙混）");
+  A.closePurchPop();
+
+  /* ---------- [8] 截图 ---------- */
+  log("\n=== [8] 截图 ===");
+  document.querySelectorAll("#tbody tr.expand-row").forEach(e => e.remove());
+  // 先把页面滚回表格区（滚动会收起浮窗），再点开 —— 否则截到的是页顶
+  window.scrollTo(0, window.scrollY + wrap.getBoundingClientRect().top - 120);
+  await sleep(300);
+  pick("诸**风").click();
+  await sleep(300);
   ok(!pop.classList.contains("hidden"), "浮窗已打开，准备截图");
 
   log("\n通过 " + pass + " / " + (pass + fail));
