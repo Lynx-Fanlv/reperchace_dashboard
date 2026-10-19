@@ -94,8 +94,10 @@ ok(tagTpl && !/data-reason/.test(tagTpl), "★ 原因标签也不再带 data-rea
 log("\n=== [D] 语义哨兵：显式「未标」（空串）不被自动判定顶掉 ===");
 ok(/Object\.prototype\.hasOwnProperty\.call\(STORE\.reasonOverrides,\s*subKey\)/.test(APP),
   "★ 行内 reason 解析用 hasOwnProperty 判「有没有被人工点选过」（原 `|| autoReason` 会把空串顶掉）");
-ok(/Object\.prototype\.hasOwnProperty\.call\(STORE\.reasonOverrides,\s*nk\)/.test(APP),
-  "回传表接续时同样用 hasOwnProperty（用户点过的「未标」也算已有编辑）");
+ok(/function applyCallbackRecords[\s\S]{0,900}?P\.patientKey\(fu\.patient_name, fu\.phone\)/.test(APP),
+  "回传表接续备注时仍用与行一致的键（姓名\\u0000电话）");
+ok(!/function applyCallbackRecords[\s\S]{0,900}?STORE\.reasonOverrides/.test(APP),
+  "★ 回传表不再写「人工点选」（原因改由记录自身字段参与判定，不会跨轮钉死）");
 const falsyBug = /const reason\s*=\s*STORE\.reasonOverrides\[subKey\]\s*\|\|/.test(APP);
 ok(!falsyBug, "已无 `STORE.reasonOverrides[subKey] || autoReason` 的真值判断写法");
 

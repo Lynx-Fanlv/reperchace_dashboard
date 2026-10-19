@@ -207,22 +207,23 @@ const ok = (cond, msg) => { cond ? pass++ : fail++; out.push((cond ? "  ✅ " : 
       log("  " + k.padEnd(16) + a.padEnd(26) + b.padEnd(26) + c + diff);
     }
 
-    // 关键断言：用户能看见的随访字段，三轮必须一致。
-    // matchedSummary 是内部「这行是跟哪条随访算出来的」指针，回传兜底时自然是「跟进回传」，不作为断言项。
-    const VISIBLE = [["fuType","随访类型"],["fuTime","随访时间"],["fuSignal","随访信号"],
-                     ["sigKind","随访信号类别"],["reason","未购药原因"],["reasonText","未购药原因(显示)"],
-                     ["status","患者状态"]];
-    log("\n=== 断言：随访字段不得因「传回回传表」而退化 ===");
+    // 关键断言：状态类字段（信号 / 原因 / 患者状态）三轮必须一致 —— 回传表把随访表原列名的状态列
+    // 原样带回，所以「只传销售 + 回传表」也能算出同样的状态与原因。
+    // ⚠ 随访类型 / 时间不再要求等于第 1 轮：用户 2026-10-19 定「导出回传表＝记录导出当天的一次随访」，
+    //   2B 只有它这一条记录，页面显示「跟进回传 / 导出当天」才是正确结果（不是退化）。
+    const VISIBLE = [["fuSignal","随访信号"],["sigKind","随访信号类别"],["reason","未购药原因"],
+                     ["reasonText","未购药原因(显示)"],["status","患者状态"]];
+    log("\n=== 断言：状态与原因不得因「传回回传表」而退化 ===");
     for (const [k, label] of VISIBLE) {
       ok(R2A[k] === R1[k], "2A（销售+随访+回传）" + label + " = 第1轮 → " + w(R2A[k]));
       ok(R2B[k] === R1[k], "2B（销售+回传，不传随访表）" + label + " = 第1轮 → " + w(R2B[k]));
     }
     ok(R2A.storeNote === NOTE && R2B.storeNote === NOTE, "备注在 2A/2B 都已接续回来");
     ok(R2A.noteShown === NOTE && R2B.noteShown === NOTE, "备注在界面上看得见（2A/2B）");
-    ok(R2A.fuType !== "跟进回传" && R2B.fuType !== "跟进回传", "随访类型没有再被「跟进回传」冒充");
-    // 随访时间：等于第 1 轮的原随访日（而不是导出当天）。导出当天随运行日期变化，故与第 1 轮比对，不写死。
-    ok(R2A.fuTime === R2B.fuTime && /^\d{4}-\d{2}-\d{2}$/.test(String(R2B.fuTime)),
-      "随访时间是一个真实日期且两轮一致 → " + w(R2B.fuTime) + "（导出当天不是它）");
+    ok(R2B.fuType === "跟进回传", "2B 随访类型＝这条回传记录自己（它就是导出当天那条随访）→ " + w(R2B.fuType));
+    ok(/^\d{4}-\d{2}-\d{2}$/.test(String(R2B.fuTime)), "2B 随访时间＝导出当天 → " + w(R2B.fuTime));
+    ok(R2A.fuType === R1.fuType || R2A.fuType === "跟进回传",
+      "2A 用真实随访或更近的回传记录（同一套日期规则）→ " + w(R2A.fuType));
 
   } catch (err) {
     fail++;

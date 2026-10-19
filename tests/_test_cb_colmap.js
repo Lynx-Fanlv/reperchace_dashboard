@@ -1,4 +1,4 @@
-// 校验：新回传表（19 列）能否被导入侧按预期映射回 fu 字段，且旧回传表（10 列）仍兼容。
+// 校验：回传表（17 列）能否被导入侧按预期映射回一条普通随访记录，且旧回传表（10 列）仍兼容。
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
@@ -10,7 +10,7 @@ new Function(fs.readFileSync(path.join(ROOT, 'pipeline.js'), 'utf8'))();
 const P = global.Pipeline;
 
 const NEW_HEAD = ["任务状态", "服务摘要", "患者姓名", "联系电话", "产品", "执行时间", "执行人",
-  "未购药原因", "跟进备注", "随访小结", "原随访类型", "原随访时间", "患者目前的用药状态是？",
+  "未购药原因", "跟进备注", "随访小结", "患者目前的用药状态是？",
   "是否已按时购药", "是否判定患者属于易脱落（失访/停药）高风险", "判断为易脱落的原因",
   "还在按照处方继续使用", "推迟用药的原因", "停药的原因是什么"];
 const OLD_HEAD = NEW_HEAD.slice(0, 10);
@@ -36,7 +36,7 @@ function sheetOf(header, rows) {
   };
 
   const dataRow = ["已完成", "跟进回传", "甘斌元", "18980336951", "百悦泽", "2026-09-30", "刘倩",
-    "推迟购药", "备注内容A", "小结内容B", "常规随访", "2027-01-05", "已停药", "否", "是",
+    "推迟购药", "备注内容A", "小结内容B", "已停药", "否", "是",
     "经济困难", "是", "医生建议推迟一周", "负担不起"];
   const buf = sheetOf(NEW_HEAD, [dataRow]);
 
@@ -46,8 +46,6 @@ function sheetOf(header, rows) {
   eq('识别为随访表（未误判为销售/周期）', res.followups.length, 1);
   const f = res.followups[0] || {};
   eq('服务摘要=跟进回传（识别标记未被原随访类型抢走）', f.summary_type, '跟进回传');
-  eq('原随访类型', f.orig_fu_type, '常规随访');
-  eq('原随访时间', f.orig_fu_time, '2027-01-05');
   eq('患者姓名', f.patient_name, '甘斌元');
   eq('联系电话', f.phone, '18980336951');
   eq('产品', f.product, '百悦泽');
@@ -61,7 +59,7 @@ function sheetOf(header, rows) {
   eq('仍在按处方使用', f.still_using, '是');
   eq('推迟原因', f.delay_reason, '医生建议推迟一周');
   eq('停药原因', f.stop_reason, '负担不起');
-  eq('执行时间（导出当天，不作随访时间用）', String(f.exec_time), '2026-09-30');
+  eq('执行时间＝导出当天（这就是这条随访记录的时间）', String(f.exec_time), '2026-09-30');
   eq('执行人', f.executor, '刘倩');
 
   // 旧 10 列回传表仍要能被识别，且新字段为空
@@ -72,7 +70,7 @@ function sheetOf(header, rows) {
   const g = res2.followups[0] || {};
   eq('旧表-服务摘要', g.summary_type, '跟进回传');
   eq('旧表-备注', g.callback_note, '备注内容A');
-  eq('旧表-原随访类型为空', g.orig_fu_type, null);
+  eq('旧表-未购药原因标签', g.reason_label, '推迟购药');
   eq('旧表-用药状态为空', g.usage_status, null);
 
   console.log('\n结果: ' + pass + ' 通过 / ' + fail + ' 失败');

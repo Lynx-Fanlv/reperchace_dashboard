@@ -194,10 +194,6 @@ function normalizeFollowup(row, colmap, sourceFile, sheetName, i) {
     follow_note: _gtext(row, colmap, "follow_note") || null,
     reason_label: _gtext(row, colmap, "reason_label") || null, // 回传表专用：人工选定的未购药原因分类标签
     callback_note: _gtext(row, colmap, "callback_note") || null, // 回传表专用：用户在「跟进备注」列填写的内容
-    // 回传表专用：上一轮真实随访的类型 / 时间。
-    // 回传记录自身的 服务摘要=跟进回传、执行时间=导出当天，都不能当随访内容展示，故单独带两列。
-    orig_fu_type: _gtext(row, colmap, "f_orig_type") || null,
-    orig_fu_time: _gtext(row, colmap, "f_orig_time") || null,
     usage_status: multi("usage_status"),
     purchased_on_time: multi("purchased_on_time"),
     is_dropout: multi("is_dropout"),

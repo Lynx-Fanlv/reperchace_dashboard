@@ -49,7 +49,7 @@ const S = App.state, ST = App.STORE;
 // _key 必须与 buildRows 生成的一致（姓名\u0000电话），否则回传表往返后键对不上、备注绑不回行
 const rowA = { _key: P.patientKey('张小三', '13800001111'), product: '百泽安', patient_name: '张小三', phone: '13800001111', physician: '李大夫',
   executor: '刘倩', fu_note: '原始随访小结：患者表示会按时购药', status: '应回购', repur_part: '应回未回', reason: '', days_to_due: 2,
-  // 匹配到的真实随访：回传表要把它的随访状态一起带走（原随访类型/时间 + 各信号列）
+  // 匹配到的真实随访：回传表要把它的状态列一起带走（用药状态/停药原因…，都是随访表原列名）
   _matched: { summary_type: '常规随访', exec_time: '2026-09-01 09:00:00', plan_time: '2026-09-01 09:00:00',
     usage_status: '已停药', purchased_on_time: '已停药', is_dropout: '是', dropout_reason: null,
     still_using: null, delay_reason: null, stop_reason: '经济困难，负担不起', follow_note: '原始随访小结：患者表示会按时购药' } };
@@ -84,8 +84,8 @@ App.DATA.rows = [rowA, rowB, rowC];
   // 前 10 列是既有契约（导入侧的类型识别签名 + 旧版回传表都依赖它），位置与含义不得变动
   eq('前 10 列表头不变', head.slice(0, 10),
     ['任务状态', '服务摘要', '患者姓名', '联系电话', '产品', '执行时间', '执行人', '未购药原因', '跟进备注', '随访小结']);
-  eq('总列数（10 + 9 列随访状态快照）', head.length, 19);
-  eq('追加列', head.slice(10), ['原随访类型', '原随访时间', '患者目前的用药状态是？', '是否已按时购药',
+  eq('总列数（10 + 7 列随访状态）', head.length, 17);
+  eq('追加列（随访表原列名）', head.slice(10), ['患者目前的用药状态是？', '是否已按时购药',
     '是否判定患者属于易脱落（失访/停药）高风险', '判断为易脱落的原因', '还在按照处方继续使用',
     '推迟用药的原因', '停药的原因是什么']);
   eq('数据行数', ws.rowCount - 1, 2);
@@ -103,14 +103,12 @@ App.DATA.rows = [rowA, rowB, rowC];
   eq('未购药原因（人工选定的行）', r2[idx['未购药原因']], '脱落·经济');
   eq('未购药原因（未点选的行留空）', r1[idx['未购药原因']], '');
   ok('执行时间为日期', /^\d{4}-\d{2}-\d{2}$/.test(String(r1[idx['执行时间']])));
-  // —— 随访状态快照列：让「只传销售 + 回传表」也能还原患者状态 ——
-  eq('A-原随访类型（不写成「跟进回传」）', r1[idx['原随访类型']], '常规随访');
-  eq('A-原随访时间（不写成导出当天）', r1[idx['原随访时间']], '2026-09-01');
+  // —— 随访状态列：让「只传销售 + 回传表」也能还原患者状态（列名即随访表原列名）——
   eq('A-用药状态', r1[idx['患者目前的用药状态是？']], '已停药');
   eq('A-是否已按时购药', r1[idx['是否已按时购药']], '已停药');
   eq('A-易脱落判定', r1[idx['是否判定患者属于易脱落（失访/停药）高风险']], '是');
   eq('A-停药原因', r1[idx['停药的原因是什么']], '经济困难，负担不起');
-  eq('B-无匹配随访时状态列留空', r2[idx['原随访类型']] == null || r2[idx['原随访类型']] === '', true);
+  eq('B-无匹配随访时状态列留空', r2[idx['患者目前的用药状态是？']] == null || r2[idx['患者目前的用药状态是？']] === '', true);
 
   console.log('\n[3] 该文件能被导入侧识别为「随访数据」');
   eq('表类型识别', M.detectTableType(head), 'followup');
@@ -138,13 +136,14 @@ App.DATA.rows = [rowA, rowB, rowC];
   eq('随访失败未探寻原因', App.reasonKeyFromLabel('随访失败未探寻原因'), 'fuFail');
   eq('未知标签返回空', App.reasonKeyFromLabel('不存在的分类'), '');
 
-  console.log('\n[5] 新一轮分析时自动接续（模拟清空后重新上传）');
+  console.log('\n[5] 新一轮分析时自动接续（只接续页面填写状态，不碰「人工点选」）');
   ST.notes = {}; ST.reasonOverrides = {};
   const cb = App.applyCallbackRecords(res.followups);
   eq('接续备注数', cb.nNote, 1);
-  eq('接续原因数', cb.nReason, 1);
   eq('备注回到「跟进备注」列', ST.notes[keyA], '已电话联系，患者说本周五去买');
-  eq('原因等同人工点选', ST.reasonOverrides[keyB], 'dropout_econ');
+  ok('★ 回传原因不再写成「人工点选」（改由记录自身字段参与判定）',
+    !Object.prototype.hasOwnProperty.call(ST.reasonOverrides, keyB));
+  eq('回传原因留在记录上', fuB && fuB.reason_label, '脱落·经济');
 
   console.log('\n[6] 不覆盖本轮已编辑的内容');
   ST.notes[keyA] = '用户刚刚改过的新内容';

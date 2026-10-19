@@ -4,11 +4,11 @@
 //   「如果用户只填写了跟进备注，没填或没改停药原因，导出的时候就导出该行当时的用药状态。
 //     即无论是自动抓取到的原因，还是用户填的，还是空白的，都原样导出。」
 //
-// 因此本测试锁定三件事：
+// 因此本测试锁定四件事：
 //   [1] 导出值 = 该行当前的结果（人工点选 > 自动判定 > 空），不是「只导出人工点选过的」
 //   [2] 状态列取该行当前匹配到的随访原样（无匹配 → 留空）
-//   [3] 导入时：记录字段能复现的原因不写成人工点选（避免把旧快照变成永久覆盖），
-//       复现不了的才固定下来；本轮已有人工点选一律不覆盖
+//   [3] 导入时只接续备注，不写「人工点选」（原因改由记录自身字段参与判定）
+//   [4] 记录写明的「未购药原因」优先于文本推导 → 人工改过的分类能原样回来
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
@@ -102,33 +102,25 @@ ST.reasonOverrides[rowBlankPick._key + '::百泽安'] = '';   // 显式点选「
   console.log('\n[2] 导出：状态列取该行原样，无匹配随访就留空');
   eq('乙二-用药状态', byName['乙二'][idx['患者目前的用药状态是？']], '已停药');
   eq('乙二-停药原因', byName['乙二'][idx['停药的原因是什么']], '经济困难，负担不起');
-  eq('乙二-原随访类型', byName['乙二'][idx['原随访类型']], '常规随访');
-  eq('乙二-原随访时间', byName['乙二'][idx['原随访时间']], '2026-09-01');
   eq('戊五-用药状态留空', byName['戊五'][idx['患者目前的用药状态是？']] || '', '');
-  eq('戊五-原随访类型留空', byName['戊五'][idx['原随访类型']] || '', '');
+  eq('戊五-停药原因留空', byName['戊五'][idx['停药的原因是什么']] || '', '');
 
-  console.log('\n[3] 导入：记录字段能复现的原因，不写成人工点选（否则会永久压住后续随访）');
+  console.log('\n[3] 导入：只接续备注，原因交给记录自身字段（不再写「人工点选」）');
   const cb = [
-    // 自动判定的那类：字段里就有 stop_reason，import 侧自己也能推出 dropout_econ
     { summary_type: '跟进回传', patient_name: '乙二', phone: '13800000002', product: '百泽安',
       callback_note: '已联系，家属代买', reason_label: '脱落·经济', stop_reason: '经济困难，负担不起',
       usage_status: '已停药' },
-    // 人工改过的那类：记录字段推出来是 dropout_econ，与标签「推迟购药」不一致 → 必须固定
     { summary_type: '跟进回传', patient_name: '丙三', phone: '13800000003', product: '百泽安',
       callback_note: '已联系，改为下周', reason_label: '推迟购药', stop_reason: '经济困难，负担不起',
       usage_status: '已停药' },
-    // 无任何状态字段：推不出原因 → 必须固定
     { summary_type: '跟进回传', patient_name: '戊五', phone: '13800000005', product: '百悦泽',
       callback_note: '已联系', reason_label: '推迟购药' },
   ];
   ST.notes = {}; ST.reasonOverrides = {};
   const res = App.applyCallbackRecords(cb);
   eq('接续备注数', res.nNote, 3);
-  eq('接续原因数', res.nReason, 3);
-  ok('乙二：自动原因没有被固化成人工点选',
-    !Object.prototype.hasOwnProperty.call(ST.reasonOverrides, '乙二' + '\u0000' + '13800000002' + '::百泽安'));
-  eq('丙三：人工原因被固定', ST.reasonOverrides['丙三' + '\u0000' + '13800000003' + '::百泽安'], 'delay');
-  eq('戊五：推不出的原因被固定', ST.reasonOverrides['戊五' + '\u0000' + '13800000005' + '::百悦泽'], 'delay');
+  eq('★ 不写入任何「人工点选」', Object.keys(ST.reasonOverrides).length, 0);
+  eq('原因留在记录上（乙二）', cb[0].reason_label, '脱落·经济');
 
   console.log('\n[4] 导入后重新计算：原因仍然回到列表上（不是「未标」）');
   // 用真实销售 + 回传记录跑一遍判定
@@ -148,6 +140,21 @@ ST.reasonOverrides[rowBlankPick._key + '::百泽安'] = '';   // 显式点选「
   ok('取到乙二的行', !!row);
   eq('★ 回传后原因仍为「脱落·经济」', row.reason, 'dropout_econ');
   eq('★ 回传后随访信号类别仍为 dropout', row.fu_signal_kind, 'dropout');
+
+  console.log('\n[5] 记录自带的「未购药原因」优先于文本推导（人工改过的分类能原样回来）');
+  // 丙三：停药原因写「经济困难」，但该行当时被人工改判为「推迟购药」
+  ST.sales = [
+    { sales_time: '2026-08-01', product: '百泽安', patient_name: '丙三', phone: '13800000003', qty: '1',
+      pharmacy: '南充药房', hospital: '川北医学院附属医院', physician: '刘洋' },
+  ];
+  ST.followups = cb.filter(f => f.patient_name === '丙三').map(f => Object.assign({
+    task_status: '已完成', exec_time: '2026-10-19 09:00:00', plan_time: '2026-10-19 09:00:00',
+    follow_note: '', product: '百泽安',
+  }, f));
+  ST.reasonOverrides = {};
+  const rowC = App.buildRows().find(r => r.patient_name === '丙三');
+  ok('取到丙三的行', !!rowC);
+  eq('★ 记录写明的分类胜出（推迟购药）', rowC.reason, 'delay');
 
   console.log('\n结果: ' + pass + ' 通过 / ' + fail + ' 失败');
   if (fail) process.exit(1);

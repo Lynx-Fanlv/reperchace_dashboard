@@ -298,6 +298,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         info: info,
         note: A.STORE.notes[k] || null,
         reason: A.STORE.reasonOverrides[k] || null,
+        rowReason: (A.DATA.rows.find(x => x.patient_name === ${JSON.stringify(TARGET_NAME)}) || {}).reason || null,
         rowCount: A.DATA.rows.length,
       };
     })()`);
@@ -310,7 +311,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(r2.cbCount >= 1, "★ 回传记录进入随访池并被识别为「跟进回传」");
     ok(/已接续回传/.test(r2.info), "★ 顶部出现「已接续回传」提示");
     ok(r2.note === NOTE, "★ 备注已回填到 STORE（键 = " + JSON.stringify((target ? target.key : "").slice(0, 16)) + "…）");
-    ok(r2.reason === REASON_KEY, "★ 未购药原因已等同人工点选回填");
+    ok(r2.reason === null, "回传不再写「人工点选」（STORE.reasonOverrides 里没有它）");
+    ok(r2.rowReason === REASON_KEY, "★ 未购药原因从记录自身字段还原 → " + JSON.stringify(r2.rowReason));
 
     // 界面上看得见吗（用户视角）
     await evalJS(`(() => { const A = window.AppCore; A.state.refDate = ${JSON.stringify(seeded && seeded.ref || "")}; A.state.page = 1; A.state.pageSize = 500; return A.refresh(); })()`, true);
@@ -331,10 +333,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     log("  界面取值 = " + JSON.stringify(dom));
     ok(dom && dom.noteBox === NOTE, "★ 界面上「跟进备注」框里看得见回填内容");
     ok(dom && !!dom.tagText && dom.tagText.includes("推迟购药"), "★ 界面上「未购药原因」标签显示为「" + (dom && dom.tagText) + "」");
-    // 随访类型：本轮没有真实随访表，回传记录也不该冒充随访类型（旧行为会显示「跟进回传」+ 导出当天）。
-    // 第 1 轮没有匹配到任何真实随访 → 回传表里「原随访类型」为空 → 这里应为空。
-    ok(dom && dom.fuType === "", "★ 随访类型不再被「跟进回传」冒充（实际 = " + JSON.stringify(dom && dom.fuType) + "）");
-    ok(dom && (dom.fuTime === "" || dom.fuTime === "—"), "★ 随访时间不再被导出当天冒充（实际 = " + JSON.stringify(dom && dom.fuTime) + "）");
+    // 随访类型/时间：用户 2026-10-19 定「导出回传表＝记录导出当天的一次随访」，
+    // 所以本轮只有回传记录时，界面就该显示「跟进回传 / 导出当天」—— 这是正确结果，不是退化。
+    ok(dom && dom.fuType === "跟进回传", "★ 随访类型＝这条回传记录自己的类型（实际 = " + JSON.stringify(dom && dom.fuType) + "）");
+    ok(dom && /^\d{4}-\d{2}-\d{2}$/.test(String(dom.fuTime)), "★ 随访时间＝导出当天（实际 = " + JSON.stringify(dom && dom.fuTime) + "）");
 
     // 「随访信号」列：回传表不带信号字段，记下实际值供判断（不硬断言）
     log("  （观察项）「随访信号」列 = " + JSON.stringify(dom && dom.fuSignal) + "，「随访时间」列 = " + JSON.stringify(dom && dom.fuTime));
@@ -344,8 +346,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     /* ===== 第 3 轮：回传表会不会把「真实随访」顶掉（复核项）===== */
     log("\n=== [3] 第三轮：销售 + 真实随访表 + 回传表 一起上传 ===");
-    log("    目的：回传表不是真实随访任务，只是承载备注/原因的载体。");
-    log("    若它参与「匹配随访」竞争并胜出，界面会变成 随访类型=跟进回传、随访信号=空 —— 真实随访状态被冲掉。");
+    log("    口径（2026-10-19 定）：回传表＝导出当天的一次随访，与随访表同规则 —— 谁更近谁说话。");
+    log("    本轮把周期放大到 400 天，两条记录都早于应购药日 → 取最近的一条（回传表，导出日更晚）。");
     const FU_FIXTURE = FU_PATH;
     if (!fs.existsSync(FU_FIXTURE)) {
       log("  （跳过）随访表 fixture 不存在: " + FU_FIXTURE + "，先跑 `node tests/_mk_fixtures.mjs followup`");
@@ -378,7 +380,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
                    fuTime: r && r.fu_time, matchedSummary: r && r._matched && r._matched.summary_type,
                    cycle: r && r.cycle_days, due: r && r.due_date,
                    stdCycle: JSON.stringify(A.state.stdCycle),
-                   note: A.STORE.notes[k] || null, reason: A.STORE.reasonOverrides[k] || null };
+                   note: A.STORE.notes[k] || null, reason: A.STORE.reasonOverrides[k] || null,
+                   rowReason: r && r.reason };
         });
       })()`, true);
       log("  随访池 = " + r3.fuTotal + " 条（回传 " + r3.cbFus + " / 真实 " + r3.realFus + "）");
@@ -386,10 +389,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       log("  周期设置 = " + r3.stdCycle);
       log("  STORE 备注 = " + JSON.stringify(r3.note) + " / 原因 = " + JSON.stringify(r3.reason));
 
-      ok(r3.matchedSummary !== "跟进回传", "★ 匹配到的随访是真实随访（不是回传表）—— 实际 = " + JSON.stringify(r3.matchedSummary));
-      ok(r3.sigKind === "dropout", "★ 「随访信号」保留了真实的脱落判定（kind=dropout）—— 实际 = " + JSON.stringify(r3.sigKind) + " / " + JSON.stringify(r3.fuSignal));
-      ok(r3.fuType === "常规随访", "★ 「随访类型」仍是真实随访类型 —— 实际 = " + JSON.stringify(r3.fuType));
-      ok(r3.note === NOTE && r3.reason === REASON_KEY, "★ 备注/原因仍然接续（回传表被排除在匹配之外，不影响回流）");
+      ok(r3.matchedSummary === "跟进回传", "★ 更近的那条记录（回传表）胜出 —— 同一套日期规则，实际 = " + JSON.stringify(r3.matchedSummary));
+      // 注意：第 1 轮只传了销售明细（没有随访表），所以那份回传表的状态列本来就是空的。
+      // 它是最新记录 → 按它的内容判定，状态为空。这是「同一套规则」的必然结果，不是状态丢失；
+      // 「状态能否随回传表还原」由 tests/_cdp_cb_state_carry.mjs 专门覆盖（那份回传表是从有随访的一轮导出的）。
+      ok(r3.sigKind === "unknown" && r3.fuSignal === "",
+        "胜出的回传记录本身不含状态（第 1 轮无随访）→ 状态列空，实际 = " + JSON.stringify(r3.sigKind));
+      ok(r3.fuType === "跟进回传" && /^\d{4}-\d{2}-\d{2}$/.test(String(r3.fuTime)),
+        "★ 随访类型/时间＝这条回传记录自己 —— 实际 = " + JSON.stringify(r3.fuType) + " / " + JSON.stringify(r3.fuTime));
+      ok(r3.note === NOTE && r3.rowReason === REASON_KEY, "★ 备注/原因仍然接续 —— 原因 = " + JSON.stringify(r3.rowReason));
     }
 
   } catch (err) {

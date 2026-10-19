@@ -115,9 +115,9 @@ const eq = (name, got, want) => {
     const code = fs.readFileSync(path.join(ROOT, f), 'utf8');
     ok(f + ' 含「任何状态都渲染备注框」的实现', /input class="note-input"/.test(code));
     ok(f + ' 不再有「!canNote → 返回 —」的旧写法', !/\$\{SNAP_MODE \? "disabled" : ""\}>`\};?\s*\n?\s*if \(!canNote\)/.test(code) && !/if \(!canNote\) return/.test(code));
-    ok(f + ' 含随访状态快照列 CB_FU_STATE_COLS', code.includes('CB_FU_STATE_COLS'));
-    ok(f + ' 含原随访类型/时间取值 origFuType/origFuTime', code.includes('origFuType') && code.includes('origFuTime'));
-    ok(f + ' 含原随访类型列名', code.includes('原随访类型'));
+    ok(f + ' 含随访状态列 CB_FU_STATE_COLS', code.includes('CB_FU_STATE_COLS'));
+    ok(f + ' 含随访类型/时间取值 fuTypeOf/fuTimeOf', code.includes('function fuTypeOf') && code.includes('function fuTimeOf'));
+    ok(f + ' 不再带「原随访类型」这列（回传表就是当天那条随访）', !code.includes('原随访类型'));
   }
 
   console.log('\n结果: ' + pass + ' 通过 / ' + fail + ' 失败');
