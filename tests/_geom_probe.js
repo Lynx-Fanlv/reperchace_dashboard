@@ -30,7 +30,8 @@
   log('=== 需求3：长文本不再撑开间距 ===');
   const tr = tbl.querySelector('tbody tr.data-row');
   const rh = Math.round(tr.getBoundingClientRect().height);
-  ok(rh >= 30 && rh <= 45, '行高 ' + rh + 'px（原先 71px → 目标 30~45px）');
+  // 行高变量是下限；医院/科室等列最多 2 行（--clamp-lines 默认 2），所以实际行高上限约 58px
+  ok(rh >= 30 && rh <= 58, '行高 ' + rh + 'px（原先 71px；两行内容时约 52px）');
   const over = tbl.scrollWidth - wrap.clientWidth;
   ok(over <= 24, '横向溢出 ' + Math.max(0, over) + 'px（原先 556px；≤24px 可接受）');
 
@@ -40,8 +41,8 @@
   ok(tag.getAttribute('title') === LONG_PROD, '悬停 title 保留完整药品名');
   ok(cell('品种').getBoundingClientRect().width <= 120, '品种列宽 ' + Math.round(cell('品种').getBoundingClientRect().width) + 'px（≤120px）');
 
-  const clipEl = cell('医院').querySelector('.clip1');
-  ok(!!clipEl && clipEl.scrollWidth > clipEl.clientWidth, '长医院名单行截断');
+  const clipEl = cell('医院').querySelector('.clipn');
+  ok(!!clipEl && clipEl.scrollHeight > clipEl.clientHeight, '长医院名按行数截断（超出部分隐藏）');
   const h0 = clipEl.getBoundingClientRect().height;
   clipEl.click(); await new Promise(r => setTimeout(r, 130));
   const h1 = clipEl.getBoundingClientRect().height;
@@ -73,7 +74,10 @@
   ok(A.STORE.cycleOverrides[key] === 35, '覆盖值写入（键 = patientKey::品种）');
   ok(Object.keys(A.STORE.cycleOverrides).every(k => k.includes('\u0000')), '键保留 \\u0000 分隔符（未被 DOM 污染）');
   ok(after.cyc === '35', '周期列显示 35');
-  ok(after.due !== before.due && /还有\d+天/.test(after.due), '应购日重算："' + before.due + '" → "' + after.due + '"');
+  // 只断言「日期本身按新周期重算」，不断言「还有N天 / 逾期N天」——后者取决于运行当天的参考日，
+  // 过几天再跑就会从「还有16天」变成「逾期13天」，属于日期漂移而非回归。
+  ok(after.due !== before.due && after.due.startsWith('2026-10-06'),
+    '应购日重算（末购 09-01 + 周期 35 = 10-06）："' + before.due + '" → "' + after.due + '"');
   const ce = cell('周期').querySelector('.cycle-edit');
   ok(ce.classList.contains('over') && !!cell('周期').querySelector('.ce-dot'), '已设置行有实心标识 + 圆点');
 
@@ -98,7 +102,8 @@
   A.STORE.cycleOverrides[key] = 35;
   await A.refresh(); await new Promise(r => setTimeout(r, 400));
   const rh2 = Math.round(tbl.querySelector('tbody tr.data-row').getBoundingClientRect().height);
-  ok(rh2 <= 45, '设置周期后行高仍为 ' + rh2 + 'px');
+  // 上限 58：医院/科室等列允许最多 2 行（--clamp-lines 默认 2）；关键是「改周期不会把行高撑爆」
+  ok(rh2 <= 58, '设置周期后行高仍为 ' + rh2 + 'px（≤58，两行封顶）');
 
   log('\n通过 ' + pass + ' / ' + (pass + fail));
   if (fail) log('❌ 有 ' + fail + ' 项失败');

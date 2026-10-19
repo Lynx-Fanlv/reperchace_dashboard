@@ -194,17 +194,11 @@
      结果每一列都过窄、内容被截得过多。故改为「固定布局 + 逐列权重」，让重要列拿够宽度。
      列宽用 col 元素按「列 key」下发（见 app.js renderTable），改列显隐时不会错位。 */
   table{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
-  /* 列宽档位（由 app.js renderTable 按列 key 用 colgroup 下发，百分比）。
-     用百分比而非固定 px：19 列全显时若写死 px，合计会超过容器宽度（实测 1866px vs 1310px）
-     而产生横向滚动；百分比则无论显隐哪些列都恰好铺满容器，且各列相对优先级不变。
-     比例依据实测内容长度：品种/医院最长（30/27 字符）→ 权重最高；纯数字列最低。 */
-  col.c-narrow{width:2.4%;min-width:42px}   /* 购药数量、周期(天)、距今天数 —— 纯数字 */
-  col.c-tel{width:4.1%;min-width:60px}       /* 电话（11 位数字） */
-  col.c-date{width:4.9%;min-width:68px}      /* 日期类：最近购药 / 应购药日期 / 匹配随访时间 */
-  col.c-mid{width:5.0%;min-width:64px}       /* 患者、医生、科室、药房、状态、原因、随访人、随访信号 */
-  col.c-prod{width:7.0%;min-width:100px}     /* 品种（长药品名单行省略） */
-  col.c-wide{width:7.2%;min-width:100px}     /* 医院、随访类型 */
-  col.c-note{width:8.8%;min-width:128px}     /* 跟进备注（输入框需要空间） */
+  /* 列宽：不再用静态百分比档位，改为 app.js 的 COL_SPEC 按「内容权重」下发：
+     宽度 = 权重 / 可见列权重之和 × 100%（colgroup 里内联 width + min-width）。
+     旧版把 8 个完全不同的列（患者/医生/科室/药房/状态/原因/随访人/随访信号）一律给 5%，
+     结果 3 个字的标签和整句话的随访信号一样宽，谁也展不开 —— 这是「文字显示不全」的根因。
+     改动后隐藏任意列时，剩余列按权重重新分满，不会像静态百分比那样留下空档。 */
   /* ---------- 表格视图微调（行高滑块 + 列宽拖拽） ----------
      两者都「本会话有效、刷新恢复默认」，不写 localStorage。
      行高：用 CSS 变量 --row-h 统一控制，不逐行改 DOM —— 千行列表下改行内样式会明显卡顿。
@@ -223,7 +217,12 @@
      交互与「拖动表头右边缘调列宽」保持同一套手感：pointerdown 在把手上，
      pointermove/up 挂 document（理由同 bindColResizers 的注释：不用 setPointerCapture）。
      用 .tbl-outer 包一层，让拖拽条固定在表格左侧，不随表格横向滚动跑掉。 */
-  .tbl-outer{display:flex;align-items:stretch;gap:0}
+  .tbl-outer{display:flex;align-items:stretch;gap:0;
+    /* 表格区脱离 .wrap 的 1360px 上限，铺到整屏（上限 1800px）：19 列在 1360 里每列仅 ~66px，
+       连 10 个字符的日期都放不下。宽度是唯一「不增加行高」就能多显示内容的资源，先用足。
+       宽度取 min(视口-48, 1800)，左移半个宽度即相对页面居中（.wrap 本身居中，故对齐中心即可）。 */
+    width:min(calc(100vw - 48px),1800px);
+    margin-left:calc(50% - min(calc(100vw - 48px),1800px) / 2)}
   /* ⚠ 拖拽条只用 flex 的默认 stretch 拉伸，绝不写 height / align-self:stretch。
      数据少时 .tbl-wrap 只有几十像素高，硬拉伸会让可拖区域小得几乎抓不住；
      数据多时 .tbl-wrap 被 max-height:65vh 封顶，拖拽条跟着封顶即可。
@@ -256,19 +255,29 @@
   /* 拖动中：禁用文本选择、给全表加统一光标，避免鼠标移出把手后光标闪变 */
   body.col-resizing{cursor:col-resize}
   body.col-resizing th,body.col-resizing td{user-select:none}
-  th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;
+  /* 横向内边距 9→6px：19 列每列省 6px ≈ 114px，正好抵掉「19 列装不下」的缺口，
+     让日期（10 字符）、电话（11 位）在 1440 屏也能单行放下。纵向留白不变。 */
+  th,td{padding:7px 6px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;
     overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
   /* 表头：允许换行，但按「词」换行而非逐字竖排；超出两行则省略。
      word-break:keep-all 保证中文表头不会一个字一行（窄列下会变得难以阅读）。 */
   th{position:sticky;top:0;background:#fafbfc;color:var(--muted);font-weight:600;z-index:1;
     line-height:1.3;overflow:hidden;word-break:keep-all;overflow-wrap:break-word}
-  /* 单行截断：用于不需要完整展示、但可能很长的列（品种/药房/医生/科室等） */
+  /* 单行截断：用于「本身很短、或截断也不影响判断」的列（姓名/医生/电话/日期/品种标签） */
   .clip1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* 两行截断：用于确实需要看较多的列（随访类型/信号） */
-  .clip2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
-  /* 点击可展开看全文的单元格 */
+  /* 多行截断：用于「信息在文字里」的列（医院/科室/药房/随访类型/随访信号）。
+     行数由 CSS 变量 --clamp-lines 控制，默认 2 行 —— 这是「全换行太高、不换行太少」的折中：
+       · 内容短的行仍然只占 1 行（行高不变）；
+       · 内容长的行最多长到 2 行就截断，不会把整张表撑高；
+       · 想看得更多时，把左侧行高拖拽条往下拖（行数跟着行高走，见 app.js setRowHeight）。
+     为什么不用 white-space:pre-wrap：中文没有空格，纯 nowrap 也无法折行，必须靠 line-clamp。 */
+  :root{--clamp-lines:2}
+  .clipn{display:-webkit-box;-webkit-line-clamp:var(--clamp-lines,2);-webkit-box-orient:vertical;
+    overflow:hidden;word-break:break-word;overflow-wrap:anywhere}
+  /* 点击可展开看全文的单元格（单行/多行通用：展开时同时去掉 nowrap 与行数限制） */
   .clip-x{cursor:zoom-in}
-  .clip-x.open{white-space:normal;word-break:break-word;cursor:zoom-out}
+  .clip-x.open{cursor:zoom-out;display:block;white-space:normal;word-break:break-word;
+    -webkit-line-clamp:unset;overflow:visible;text-overflow:clip}
   tbody tr.data-row{cursor:pointer}
   tbody tr.data-row:hover{background:#f9fbff}
   tbody tr.data-row.in-range{background:#f2f6ff}
@@ -315,7 +324,12 @@
   .ph-qty{text-align:right}
   .ph-ph{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
   .ph-empty{padding:9px 13px;font-size:12px;color:var(--muted)}
-  .tag{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap;color:#fff}
+  /* ⚠ max-width:100% + 省略号是必需的：标签是 inline-block + nowrap，
+     宽度只会按内容撑，不会自动收窄。窄列里「脱落·经济」比整列还宽时会**溢出到右邻列**，
+     表现为「未购药原因」和「随访信号」两列文字叠在一起（实测溢出 28px）。 */
+  .tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+    padding:1px 8px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap;color:#fff;
+    vertical-align:bottom}
   /* 品种标签：限宽 + 单行省略，超长药品名不再撑开列宽（完整名称见悬停提示 / 展开行） */
   .tag-prod{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;background:var(--brand-soft);
     color:var(--brand);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
@@ -342,7 +356,9 @@
   .fu-sig.nonstd{color:#E8590C}
   .fu-sig.dropout{color:#E03131}
   .fu-sig.unknown{color:var(--muted)}
-  .note-input{width:100%;min-width:110px;font-size:12px;padding:5px 8px;border:1px solid var(--line);
+  /* 备注输入框：必须 min-width:0 —— 旧版写死 110px，列被压窄时输入框比单元格还宽，
+     会把整张表顶出横向滚动（实测多出 11px）。宽度交给 width:100% 跟随列宽。 */
+  .note-input{width:100%;min-width:0;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--line);
     border-radius:6px;background:#fff;color:var(--text);font-family:inherit}
   .note-input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
   .note-input:disabled{background:var(--gray-bg);color:var(--muted)}

@@ -194,17 +194,11 @@
      结果每一列都过窄、内容被截得过多。故改为「固定布局 + 逐列权重」，让重要列拿够宽度。
      列宽用 col 元素按「列 key」下发（见 app.js renderTable），改列显隐时不会错位。 */
   table{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
-  /* 列宽档位（由 app.js renderTable 按列 key 用 colgroup 下发，百分比）。
-     用百分比而非固定 px：19 列全显时若写死 px，合计会超过容器宽度（实测 1866px vs 1310px）
-     而产生横向滚动；百分比则无论显隐哪些列都恰好铺满容器，且各列相对优先级不变。
-     比例依据实测内容长度：品种/医院最长（30/27 字符）→ 权重最高；纯数字列最低。 */
-  col.c-narrow{width:2.4%;min-width:42px}   /* 购药数量、周期(天)、距今天数 —— 纯数字 */
-  col.c-tel{width:4.1%;min-width:60px}       /* 电话（11 位数字） */
-  col.c-date{width:4.9%;min-width:68px}      /* 日期类：最近购药 / 应购药日期 / 匹配随访时间 */
-  col.c-mid{width:5.0%;min-width:64px}       /* 患者、医生、科室、药房、状态、原因、随访人、随访信号 */
-  col.c-prod{width:7.0%;min-width:100px}     /* 品种（长药品名单行省略） */
-  col.c-wide{width:7.2%;min-width:100px}     /* 医院、随访类型 */
-  col.c-note{width:8.8%;min-width:128px}     /* 跟进备注（输入框需要空间） */
+  /* 列宽：不再用静态百分比档位，改为 app.js 的 COL_SPEC 按「内容权重」下发：
+     宽度 = 权重 / 可见列权重之和 × 100%（colgroup 里内联 width + min-width）。
+     旧版把 8 个完全不同的列（患者/医生/科室/药房/状态/原因/随访人/随访信号）一律给 5%，
+     结果 3 个字的标签和整句话的随访信号一样宽，谁也展不开 —— 这是「文字显示不全」的根因。
+     改动后隐藏任意列时，剩余列按权重重新分满，不会像静态百分比那样留下空档。 */
   /* ---------- 表格视图微调（行高滑块 + 列宽拖拽） ----------
      两者都「本会话有效、刷新恢复默认」，不写 localStorage。
      行高：用 CSS 变量 --row-h 统一控制，不逐行改 DOM —— 千行列表下改行内样式会明显卡顿。
@@ -223,7 +217,12 @@
      交互与「拖动表头右边缘调列宽」保持同一套手感：pointerdown 在把手上，
      pointermove/up 挂 document（理由同 bindColResizers 的注释：不用 setPointerCapture）。
      用 .tbl-outer 包一层，让拖拽条固定在表格左侧，不随表格横向滚动跑掉。 */
-  .tbl-outer{display:flex;align-items:stretch;gap:0}
+  .tbl-outer{display:flex;align-items:stretch;gap:0;
+    /* 表格区脱离 .wrap 的 1360px 上限，铺到整屏（上限 1800px）：19 列在 1360 里每列仅 ~66px，
+       连 10 个字符的日期都放不下。宽度是唯一「不增加行高」就能多显示内容的资源，先用足。
+       宽度取 min(视口-48, 1800)，左移半个宽度即相对页面居中（.wrap 本身居中，故对齐中心即可）。 */
+    width:min(calc(100vw - 48px),1800px);
+    margin-left:calc(50% - min(calc(100vw - 48px),1800px) / 2)}
   /* ⚠ 拖拽条只用 flex 的默认 stretch 拉伸，绝不写 height / align-self:stretch。
      数据少时 .tbl-wrap 只有几十像素高，硬拉伸会让可拖区域小得几乎抓不住；
      数据多时 .tbl-wrap 被 max-height:65vh 封顶，拖拽条跟着封顶即可。
@@ -256,19 +255,29 @@
   /* 拖动中：禁用文本选择、给全表加统一光标，避免鼠标移出把手后光标闪变 */
   body.col-resizing{cursor:col-resize}
   body.col-resizing th,body.col-resizing td{user-select:none}
-  th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;
+  /* 横向内边距 9→6px：19 列每列省 6px ≈ 114px，正好抵掉「19 列装不下」的缺口，
+     让日期（10 字符）、电话（11 位）在 1440 屏也能单行放下。纵向留白不变。 */
+  th,td{padding:7px 6px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;
     overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
   /* 表头：允许换行，但按「词」换行而非逐字竖排；超出两行则省略。
      word-break:keep-all 保证中文表头不会一个字一行（窄列下会变得难以阅读）。 */
   th{position:sticky;top:0;background:#fafbfc;color:var(--muted);font-weight:600;z-index:1;
     line-height:1.3;overflow:hidden;word-break:keep-all;overflow-wrap:break-word}
-  /* 单行截断：用于不需要完整展示、但可能很长的列（品种/药房/医生/科室等） */
+  /* 单行截断：用于「本身很短、或截断也不影响判断」的列（姓名/医生/电话/日期/品种标签） */
   .clip1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* 两行截断：用于确实需要看较多的列（随访类型/信号） */
-  .clip2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
-  /* 点击可展开看全文的单元格 */
+  /* 多行截断：用于「信息在文字里」的列（医院/科室/药房/随访类型/随访信号）。
+     行数由 CSS 变量 --clamp-lines 控制，默认 2 行 —— 这是「全换行太高、不换行太少」的折中：
+       · 内容短的行仍然只占 1 行（行高不变）；
+       · 内容长的行最多长到 2 行就截断，不会把整张表撑高；
+       · 想看得更多时，把左侧行高拖拽条往下拖（行数跟着行高走，见 app.js setRowHeight）。
+     为什么不用 white-space:pre-wrap：中文没有空格，纯 nowrap 也无法折行，必须靠 line-clamp。 */
+  :root{--clamp-lines:2}
+  .clipn{display:-webkit-box;-webkit-line-clamp:var(--clamp-lines,2);-webkit-box-orient:vertical;
+    overflow:hidden;word-break:break-word;overflow-wrap:anywhere}
+  /* 点击可展开看全文的单元格（单行/多行通用：展开时同时去掉 nowrap 与行数限制） */
   .clip-x{cursor:zoom-in}
-  .clip-x.open{white-space:normal;word-break:break-word;cursor:zoom-out}
+  .clip-x.open{cursor:zoom-out;display:block;white-space:normal;word-break:break-word;
+    -webkit-line-clamp:unset;overflow:visible;text-overflow:clip}
   tbody tr.data-row{cursor:pointer}
   tbody tr.data-row:hover{background:#f9fbff}
   tbody tr.data-row.in-range{background:#f2f6ff}
@@ -315,7 +324,12 @@
   .ph-qty{text-align:right}
   .ph-ph{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
   .ph-empty{padding:9px 13px;font-size:12px;color:var(--muted)}
-  .tag{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap;color:#fff}
+  /* ⚠ max-width:100% + 省略号是必需的：标签是 inline-block + nowrap，
+     宽度只会按内容撑，不会自动收窄。窄列里「脱落·经济」比整列还宽时会**溢出到右邻列**，
+     表现为「未购药原因」和「随访信号」两列文字叠在一起（实测溢出 28px）。 */
+  .tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+    padding:1px 8px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap;color:#fff;
+    vertical-align:bottom}
   /* 品种标签：限宽 + 单行省略，超长药品名不再撑开列宽（完整名称见悬停提示 / 展开行） */
   .tag-prod{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;background:var(--brand-soft);
     color:var(--brand);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
@@ -342,7 +356,9 @@
   .fu-sig.nonstd{color:#E8590C}
   .fu-sig.dropout{color:#E03131}
   .fu-sig.unknown{color:var(--muted)}
-  .note-input{width:100%;min-width:110px;font-size:12px;padding:5px 8px;border:1px solid var(--line);
+  /* 备注输入框：必须 min-width:0 —— 旧版写死 110px，列被压窄时输入框比单元格还宽，
+     会把整张表顶出横向滚动（实测多出 11px）。宽度交给 width:100% 跟随列宽。 */
+  .note-input{width:100%;min-width:0;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--line);
     border-radius:6px;background:#fff;color:var(--text);font-family:inherit}
   .note-input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
   .note-input:disabled{background:var(--gray-bg);color:var(--muted)}
@@ -2681,22 +2697,42 @@ const visibleCols = () => LIST_COLS.filter(([key]) => {
   return !state.hiddenCols.has(key);
 });
 
-// 列宽档位：按列 key 指定宽度类名（与 index.template.html 的 col.c-* 对应）。
-// 未列出的列不写宽度 —— 固定布局下这些列平分剩余宽度（不会出现横向溢出）。
-const COL_WIDTH = {
-  qty: "c-narrow", cycle_days: "c-narrow", days_to_due: "c-narrow",
-  phone: "c-tel",
-  last_purchase: "c-date", due_date: "c-date", fu_time: "c-date",
-  product: "c-prod",
-  hospital: "c-wide", fu_type: "c-wide",
-  note: "c-note",
+// 列宽规格：w = 内容权重（按**可见列**归一化成 % 下发），min = 最小宽度兜底（px）。
+//
+// 为什么改成「权重」而不是旧版的 c-* 静态百分比档位：
+//   旧版把 8 个完全不同的列（患者/医生/科室/药房/状态/原因/随访人/随访信号）统统给 5%，
+//   于是一个 3 字标签（状态）和一句完整描述（随访信号）拿到同样 66px —— 结果谁都显示不全。
+//   权重按实测内容长度订：随访信号是整句话（最长 8~20 字）、医院 27 字符、品种 30 字符、
+//   电话 11 位数字、日期固定 10 字符、状态/原因只是短标签。
+// 顺带修掉一个隐藏问题：静态百分比之和是 96.2%，而 min-width 之和是 1330px，
+//   在 1440 窗口里表格比容器宽 → 一直存在横向滚动条。改成按可见列归一化后恰好铺满。
+const COL_SPEC = {
+  patient_name: { w: 57, min: 37 },   // 3~4 汉字（脱敏后「张*三」）
+  phone:        { w: 97, min: 63 },   // 11 位数字，必须单行，否则每行都被撑成两行
+  physician:    { w: 57, min: 37 },
+  department:   { w: 70, min: 46 },
+  product:      { w: 70, min: 53 },   // 标签形态，长英文名省略
+  hospital:     { w: 102, min: 46 },   // 最长 27 字符；常见 8~13 字 → 宽屏单行、窄屏 2 行
+  pharmacy:     { w: 80, min: 46 },   // 最长 18 字符 → 2 行截断
+  last_purchase:{ w: 84, min: 55 },   // 2026-10-19 = 10 字符
+  qty:          { w: 40, min: 26 },
+  cycle_days:   { w: 44, min: 29 },
+  due_date:     { w: 140, min: 81 },  // 日期 + 「还有N天」小标同排
+  days_to_due:  { w: 44, min: 29 },
+  fu_time:      { w: 84, min: 55 },
+  fu_type:      { w: 60, min: 39 },
+  executor:     { w: 57, min: 37 },
+  status:       { w: 76, min: 53 },   // 标签：应回未回 / 已逾期
+  reason:       { w: 94, min: 61 },   // 标签：脱落·经济（5 汉字 + 内边距）
+  fu_signal:    { w: 84, min: 59 },   // 整句话 → 2 行截断
+  note:         { w: 100, min: 72 },  // 输入框
 };
-const COL_WIDTH_MID = new Set(["patient_name", "physician", "department", "pharmacy", "status", "reason", "executor", "fu_signal"]);
-function colClass(key) {
-  if (COL_WIDTH[key]) return COL_WIDTH[key];
-  if (COL_WIDTH_MID.has(key)) return "c-mid";
-  return "";
-}
+const COL_SPEC_DEFAULT = { w: 70, min: 44 };   // 兜底：未登记的列（新增列时不必同步改表）
+const colSpec = key => COL_SPEC[key] || COL_SPEC_DEFAULT;
+
+// 允许折行（最多 --clamp-lines 行）的列：内容本身就是信息，截成一行等于丢信息。
+// 其余文本列（姓名/医生/电话/日期/随访人）是标识或固定长度，单行截断 + 悬停看全文更合适。
+const WRAP_COLS = new Set(["hospital", "department", "pharmacy", "fu_type", "fu_signal"]);
 
 /* ============ 列宽拖拽（本会话有效，不持久化） ============
  * 口径：拖过的列固定为 px，未拖过的列继续按 c-* 百分比档位自适应；
@@ -2777,9 +2813,19 @@ const DEFAULT_ROW_H = 34, MIN_ROW_H = 28, MAX_ROW_H = 160;
 function setRowHeight(px) {
   const v = Math.max(MIN_ROW_H, Math.min(MAX_ROW_H, Math.round(px)));
   const pad = Math.max(2, Math.min(7, (v - 21) / 2));
+  // jsdom 回归里有只挂了最小 DOM 桩的脚本（document.documentElement 为空），这里必须容错：
+  // 拿不到根元素就只算不写，别让整段 app.js 在加载期抛错（会连累所有测试与页面初始化）。
   const root = document.documentElement;
-  root.style.setProperty("--row-h", v + "px");
-  root.style.setProperty("--row-pad", pad.toFixed(2).replace(/\.?0+$/, "") + "px");
+  if (root && root.style && typeof root.style.setProperty === "function") {
+    root.style.setProperty("--row-h", v + "px");
+    root.style.setProperty("--row-pad", pad.toFixed(2).replace(/\.?0+$/, "") + "px");
+    // 行高同时决定「每格最多显示几行」（--clamp-lines，见 index.template.html 的 .clipn）：
+    // 一行文字约 19px（13px × 1.45），扣掉上下留白后按档位换算。
+    // 这样「拖高行」＝「多读一行文字」，不再是「拖高只多出空白」；拖到最矮则退回单行紧凑模式。
+    // 用档位而不是连续公式：连续换算会出现「拖 3px 文字行数没变、行高却变了」的空档感。
+    const lines = v <= 30 ? 1 : v <= 52 ? 2 : v <= 72 ? 3 : v <= 92 ? 4 : v <= 112 ? 5 : 6;
+    root.style.setProperty("--clamp-lines", String(lines));
+  }
   const lab = $("#rowHVal");           // 工具条已移除，这里兼容保留（取不到就跳过）
   if (lab) lab.textContent = v + "px";
   return v;
@@ -2952,13 +2998,20 @@ function renderTable() {
   const start = (state.page - 1) * state.pageSize;
   const rows = DATA.rows.slice(start, start + state.pageSize);
   // 列宽随「列显隐」动态下发：用 colgroup 而非在行内写宽度，隐藏列时列宽不会错位。
-  // 用户手动拖过宽度的列下发固定 px（内联 style 覆盖 c-* 的百分比档位），其余列沿用百分比档位。
+  // 未拖动过的列：宽 = 该列权重 / 可见列权重之和 × 100%（隐藏列后剩余列自动补满）；
+  // 拖动过的列：下发固定 px（覆盖权重）。
+  // min-width 与宽度一起下发：窗口太窄时宁可横向滚动，也不要把列压成一字一行。
   const cg = $("#colgroup");
+  const wsum = cols.reduce((s, [k]) => s + (COL_W[k] ? 0 : colSpec(k).w), 0);
+  // 拖动过的列先吃掉 px，剩余列按权重分「剩下的宽度」——否则 px 列 + 100% 的百分比列会撑出横向滚动
+  const draggedPx = cols.reduce((s, [k]) => s + (COL_W[k] || 0), 0);
+  const avail = ($("#tblWrap") || {}).clientWidth || 0;
+  const restPct = (draggedPx && avail > draggedPx) ? (avail - draggedPx) / avail * 100 : 100;
   if (cg) cg.innerHTML = cols.map(([key]) => {
-    const c = colClass(key);
+    const sp = colSpec(key);
     const px = COL_W[key];
-    const style = px ? ` style="width:${px}px"` : "";
-    return `<col class="${c || ""}"${style}>`;
+    const width = px ? `${px}px` : `${(sp.w / wsum * restPct).toFixed(3)}%`;
+    return `<col style="width:${width};min-width:${sp.min}px">`;
   }).join("");
   // 表头单元格：每列右边缘挂一个拖拽把手（最后一列不挂 —— 无处可拖，且会与纵向滚动条抢鼠标）
   $("#thead").innerHTML = cols.map(([key, label], i) =>
@@ -3091,12 +3144,14 @@ function renderTable() {
     };
   });
   // 长文本单元格：点击就地展开/收起全文（不触发行展开）
+  // 收起时按 data-clip 还原成原来那一档（clip1 单行 / clipn 多行），不能一律还原成 clip1。
   tb.querySelectorAll("tr.data-row .clip-x").forEach(el => {
     el.addEventListener("click", e => {
       e.stopPropagation();
       const open = el.classList.toggle("open");
-      if (open) el.classList.remove("clip1");
-      else el.classList.add("clip1");
+      const base = el.dataset.clip || "clip1";
+      if (open) { el.classList.remove("clip1", "clipn"); }
+      else { el.classList.add(base); }
     });
   });
   // 患者名 / 电话（「仅会员号」模式下患者列显示会员号）：点击就地弹出该患者全部购药记录。
@@ -3137,11 +3192,16 @@ function rowHtml(r, idx, cols) {
   // 早先只在「应回购 / 已逾期」渲染，其余状态整格不渲染 —— 于是「上一轮填过、经回传表接续回来」
   // 的备注在本轮状态变成「未到期」时会整条消失（数据还在 STORE 里，用户以为丢了）。
   // 备注是用户自己写的内容，可见性不能跟着状态变，否则回传闭环会出现「填了却看不见」。
-  // 长文本单元格：单行截断 + 悬停显示全文 + 点击展开（td 上加 title 会与内部元素重复，故统一挂在此包装上）
-  const clip = (txt, cls) => {
+  // 长文本单元格：单行截断 + 悬停显示全文 + 点击展开（td 上加 title 会与内部元素重复，故统一挂在此包装上）。
+  // opts.lines=2 → 走多行截断（.clipn，默认最多 2 行），用于「信息全在文字里」的列。
+  // data-clip 记录原始截断类名：展开后收起时必须还原成原来那一档，不能一律还原成 clip1。
+  const clip = (txt, opts) => {
     const s = String(txt == null ? "" : txt);
     if (!s) return "";
-    return `<div class="clip1 clip-x${cls ? " " + cls : ""}" title="${esc(s)}（点击展开全文）">${esc(s)}</div>`;
+    const cls = (opts && opts.lines > 1) ? "clipn" : "clip1";
+    const extra = (opts && opts.cls) ? " " + opts.cls : "";
+    return `<div class="${cls} clip-x${extra}" data-clip="${cls}"` +
+      ` title="${esc(s)}（点击展开全文）">${esc(s)}</div>`;
   };
   const cells = cols.map(([key]) => {
     if (key === "due_date") return `<td>${dueTxt}</td>`;
@@ -3160,10 +3220,10 @@ function rowHtml(r, idx, cols) {
     if (key === "status") {
       // 应回购行仅显示细分标签（应回未回 / 应回已回）；其他主状态照常显示
       if (r.status === "应回购" && r.repur_part) {
-        return `<td><span class="tag" style="background:${REPUR_PART_COLOR[r.repur_part]}">${esc(r.repur_part)}</span></td>`;
+        return `<td><span class="tag" title="${esc(r.repur_part)}" style="background:${REPUR_PART_COLOR[r.repur_part]}">${esc(r.repur_part)}</span></td>`;
       }
       const color = CAT_COLOR[r.status] || "#868e96";
-      return `<td><span class="tag" style="background:${color}">${esc(r.status)}</span></td>`;
+      return `<td><span class="tag" title="${esc(r.status)}" style="background:${color}">${esc(r.status)}</span></td>`;
     }
     if (key === "reason") {
       // 未购药原因列：自动判定预填 / 人工点选覆盖（所有患者可点选标注）；无标注按状态显示占位
@@ -3179,7 +3239,8 @@ function rowHtml(r, idx, cols) {
         label = "未标";
       }
       const clickable = SNAP_MODE ? "" : " clickable";
-      const title = SNAP_MODE ? "" : "title=\"点击标注未购药原因\"";
+      // title 带上标签全文：标签本身有 max-width + 省略号（防溢出到右邻列），被截时靠悬停看全
+      const title = SNAP_MODE ? `title="${esc(label)}"` : `title="${esc(label)} — 点击标注未购药原因"`;
       // 不写 data-key / data-reason：键含 \u0000 会被 HTML 解析成 U+FFFD 而失配，
       // 现算值改由事件侧 rowByTr(tag) 回查（见 renderTable 的绑定处）。
       return `<td><span class="tag reason-tag${clickable}" style="background:${color};cursor:${SNAP_MODE ? "default" : "pointer"}" ${title}>${esc(label)}</span></td>`;
@@ -3187,9 +3248,9 @@ function rowHtml(r, idx, cols) {
     if (key === "pharmacy") {
       // 药房列：选中药房筛选时，若该患者已转到其他药房，附小字提示（完整语义见 title）
       const base = esc(r.pharmacy || "");
-      if (!r.pharmacy_note) return `<td>${clip(r.pharmacy)}</td>`;
+      if (!r.pharmacy_note) return `<td>${clip(r.pharmacy, { lines: 2 })}</td>`;
       const tip = (r.pharmacy || "") + "｜" + r.pharmacy_note + "（本药房末次购药后患者已转至其他药房购药）";
-      return `<td><div class="clip1 clip-x" title="${esc(tip)}">${base}<span class="ph-note">${esc(r.pharmacy_note)}</span></div></td>`;
+      return `<td><div class="clipn clip-x" data-clip="clipn" title="${esc(tip)}">${base}<span class="ph-note">${esc(r.pharmacy_note)}</span></div></td>`;
     }
     if (key === "cycle_days") {
       // 周期列：可点击修改该患者在该品种下的用药周期（覆盖周期表与标准周期）。
@@ -3220,20 +3281,23 @@ function rowHtml(r, idx, cols) {
       const txt = String(disp(r, key) || "");
       if (!txt) return `<td></td>`;
       if (SNAP_MODE) return `<td><span>${esc(txt)}</span></td>`; // 快照不含明细，不给可点提示
-      return `<td><span class="p-link" title="点击查看该患者全部购药记录">${esc(txt)}</span></td>`;
+      // ⚠ 必须 .clip1（nowrap+省略）：11 位电话在窄列里会折成 2~3 行，
+      //   把**每一行**的行高都撑到 50px 以上 —— 这是旧版整表偏高的隐藏元凶。
+      return `<td><span class="p-link clip1" title="${esc(txt)} · 点击查看全部购药记录">${esc(txt)}</span></td>`;
     }
-    if (key === "fu_type") return `<td><div class="clip2">${esc(disp(r, key))}</div></td>`;
+    if (key === "fu_type") return `<td>${clip(disp(r, key), { lines: 2 })}</td>`;
     if (key === "fu_signal") {
       const txt = disp(r, key);
       if (!txt) return `<td><span class="muted">—</span></td>`;
       const kind = ["normal", "nonstd", "dropout"].includes(r.fu_signal_kind) ? r.fu_signal_kind : "unknown";
-      return `<td><div class="clip2"><span class="fu-sig ${kind}">${esc(txt)}</span></div></td>`;
+      return `<td><div class="clipn clip-x" data-clip="clipn" title="${esc(txt)}（点击展开全文）">` +
+        `<span class="fu-sig ${kind}">${esc(txt)}</span></div></td>`;
     }
-    // 其余文本列（患者/电话/医生/科室/医院/随访人/随访时间等）统一单行截断 + 悬停全文
+    // 其余文本列：需要读内容的（医院/科室/随访人…）给 2 行，纯标识类的给 1 行
     const raw = disp(r, key);
     const txt = String(raw == null ? "" : raw);
     if (!txt) return `<td>${txt === "" ? "" : esc(txt)}</td>`;
-    return `<td>${clip(txt)}</td>`;
+    return `<td>${clip(txt, { lines: WRAP_COLS.has(key) ? 2 : 1 })}</td>`;
   }).join("");
   return `<tr class="data-row${r.due_in_week ? " due-in-week" : ""}" data-idx="${idx}">${cells}</tr>`;
 }
@@ -4401,6 +4465,9 @@ document.addEventListener("click", e => {
 // 原「行高滑块 + 恢复默认」工具条已移除：滑块占一整天工具条且要离开表格去操作。
 // 现在行高由左侧拖拽条直接拖，与拖列宽同一套手感，也不再需要「恢复默认」按钮。
 bindRowResizer();
+// 启动时把「行高 → 每格行数」同步一次：CSS 默认值虽与之一致，但由 JS 统一算出来，
+// 免得以后改 DEFAULT_ROW_H 时忘了同步 --clamp-lines（两者不一致会导致行高与实际可见行数脱节）。
+setRowHeight(DEFAULT_ROW_H);
 
 /* ============ 本地留档管理器 ============ */
 // 入口按钮已从视图工具条挪到「已选文件」面板的「清空选择」旁边（见 index.template.html）
@@ -4967,6 +5034,7 @@ window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, 
   // 视图微调（列宽/行高）—— 导出供回归测试直接验边界夹取逻辑
   applyColWidth, clearColWidths, setRowHeight, resetColWidthsOnly,
   COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H,
+  COL_SPEC, colSpec, WRAP_COLS,
   // 本地留档：管理器 + 弹窗（askArchiveProducts 导出供回归测试直接验「按时间段勾选」的返回值）
   openArchiveManager, renderArchiveManager, exportArchiveBackup, clearAllArchive,
   askArchiveProducts, saveArchiveByProduct,

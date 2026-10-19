@@ -154,7 +154,7 @@ function saleRec(date, product) {
     '品种列不重复挂展开提示（由 .tag-prod 自带省略）');
   assert(tb2.includes('class="clip1 clip-x"'), '长文本列渲染为 .clip1（单行截断）+ .clip-x（可点击展开）');
   assert(tb2.includes('（点击展开全文）'), '截断单元格带「点击展开全文」悬停提示');
-  assert(tb2.includes('clip2'), '随访类型/信号列使用两行截断 .clip2');
+  assert(tb2.includes('clipn'), '随访类型/信号等「整句话」列使用多行截断 .clipn');
 
   // 校验样式表确实定义了限宽与断行
   const tpl = fs.readFileSync(path.join(__dirname, '..', 'index.template.html'), 'utf8');
@@ -164,7 +164,10 @@ function saleRec(date, product) {
   assert(/th,td\{[^}]*overflow-wrap:anywhere/.test(tpl), '样式：单元格 overflow-wrap:anywhere（超长串可断行）');
   assert(!/th\{[^}]*white-space:nowrap/.test(tpl), '样式：已移除 th 的 white-space:nowrap（长表头不再撑列）');
   assert(/\.clip1\{[^}]*text-overflow:ellipsis/.test(tpl), '样式：.clip1 单行省略已定义');
-  assert(/\.clip2\{[^}]*-webkit-line-clamp:2/.test(tpl), '样式：.clip2 两行截断已定义');
+  assert(/\.clipn\{[^}]*-webkit-line-clamp:var\(--clamp-lines/.test(tpl),
+    '样式：.clipn 的行数由 --clamp-lines 控制（随行高拖拽条联动）');
+  assert(/\.tag\{[^}]*max-width:100%/.test(tpl) && /\.tag\{[^}]*text-overflow:ellipsis/.test(tpl),
+    '样式：.tag 有 max-width:100% + 省略号（防止标签溢出到右邻列）');
 
   console.log('\n✅ 需求2/3 回归测试全部通过');
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

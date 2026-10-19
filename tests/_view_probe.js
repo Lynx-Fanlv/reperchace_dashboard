@@ -142,7 +142,9 @@
   A.resetColWidthsOnly();
   await new Promise(r => setTimeout(r, 350));
   ok(Math.abs(colW(TARGET) - w0) <= 2, '复位后列宽回到默认：' + colW(TARGET) + ' vs 初始 ' + w0 + 'px');
-  ok(!(colEls()[ti].getAttribute('style') || '').includes('px'), 'colgroup 内联 px 已清除');
+  const cgStyle2 = colEls()[ti].getAttribute('style') || '';
+  ok(/width:\s*[\d.]+%/.test(cgStyle2) && !/(^|[;"\s])width:\s*\d+px/.test(cgStyle2),
+    'colgroup 已清除拖动产生的固定 px（回到百分比 + min-width）：' + cgStyle2);
 
   /* ================= 需求3：左侧行高拖拽条（工具条已整条移除） ================= */
   log('\n=== 需求3：左侧行高拖拽条（纵向拖动 → 所有行同步） ===');
@@ -159,14 +161,16 @@
   const bb = bar.getBoundingClientRect();
   const tb2 = tbl.getBoundingClientRect();
   ok(bb.left < tb2.left + 1, '拖拽条位于表格左侧：bar.left ' + Math.round(bb.left) + ' ≤ table.left ' + Math.round(tb2.left));
-  ok(bb.height >= tb2.height - 4, '★ 拖拽条纵向覆盖整表：bar ' + Math.round(bb.height) +
-    'px vs table ' + Math.round(tb2.height) + 'px');
+  ok(bb.height >= Math.min(tb2.height, wrap.getBoundingClientRect().height) - 4, '★ 拖拽条纵向覆盖可视表格：bar ' + Math.round(bb.height) +
+    'px vs table ' + Math.round(tb2.height) + 'px / wrap ' + Math.round(wrap.getBoundingClientRect().height) + 'px');
   const wr = wrap.getBoundingClientRect();
   ok(bb.height >= wr.height - 4, '★ 拖拽条与 .tbl-wrap 等高：bar ' + Math.round(bb.height) +
     'px vs wrap ' + Math.round(wr.height) + 'px');
 
   const rh0 = rh();
-  ok(rh0 >= 30 && rh0 <= 45, '默认行高 ' + rh0 + 'px');
+  const cssH0 = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-h'));
+  // 行高变量是**下限**：内容需要两行时实际行高会更高（--clamp-lines 默认 2）
+  ok(cssH0 === 34 && rh0 >= 34 && rh0 <= 58, '默认行高变量 34px / 实际 ' + rh0 + 'px（两行内容时自动变高）');
 
   // 拖拽：向下拖 = 变高。
   // ⚠ 必须「移一步 → 等一帧」再移下一步：pointermove 是同步派发的，
@@ -193,7 +197,7 @@
   ok(allH.length >= 2, '有 ' + allH.length + ' 行可供验证同步');
   ok(allH.every(h => Math.abs(h - rhUp) <= 1), '★ 所有数据行同步等高（' + [...new Set(allH)].join('/') + 'px）');
   const cssH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-h'));
-  ok(Math.abs(cssH - rhUp) <= 1, '★ 通过 CSS 变量 --row-h 下发（写变量而非逐行改 DOM）：' + cssH + 'px');
+  ok(cssH > 34 && rhUp >= cssH - 1, '★ 通过 CSS 变量 --row-h 下发（写变量而非逐行改 DOM）：变量 ' + cssH + 'px / 实际 ' + rhUp + 'px');
   const tvH = [...tbl.querySelectorAll('tbody tr.data-row')][0].querySelectorAll('td')[0].style.height;
   ok(!tvH || tvH === '', '★ 未逐行写内联 height（千行列表不卡）');
 
@@ -215,7 +219,7 @@
   // 注意：不能断言绝对值（如 ≤36），因为 renderTable 之后表格的列宽重排会让
   // 长文本单元格的换行数变化，实测行高会比 --row-h 略高。要验的是「确实回到了紧凑档」。
   const rhSmall = rh();
-  ok(rhSmall < rhUp - 20, '回到紧凑行高 ' + rhSmall + 'px（比 ' + rhUp + 'px 明显更矮）');
+  ok(rhSmall <= rhUp - 10, '回到紧凑行高 ' + rhSmall + 'px（比 ' + rhUp + 'px 明显更矮）');
   ok(!localStorage.getItem('colW'), '整个过程未写 colW 到 localStorage');
 
   // 巨大幅度向上拖：必须被夹到下限 28px（不能塌成 0）
@@ -251,10 +255,10 @@
   // 这里只验证「小行高没有额外加剧横向溢出」—— 与默认行高下的溢出量同量级即可。
   ok(overH <= 120, '小行高下横向溢出未加剧：' + Math.max(0, overH) + 'px（默认档同量级）');
   const hi2 = heads.indexOf('医院');
-  const hClip = [...tbl.querySelectorAll('tbody tr.data-row')][0].querySelectorAll('td')[hi2].querySelector('.clip1');
-  ok(!!hClip, '医院列有 .clip1 单行截断容器');
-  ok(hClip && hClip.scrollWidth > hClip.clientWidth, '医院长文本被截断（scrollW ' +
-    (hClip ? hClip.scrollWidth : 0) + ' > clientW ' + (hClip ? hClip.clientWidth : 0) + '）');
+  const hClip = [...tbl.querySelectorAll('tbody tr.data-row')][0].querySelectorAll('td')[hi2].querySelector('.clipn');
+  ok(!!hClip, '医院列有 .clipn 多行截断容器');
+  ok(hClip && hClip.scrollHeight > hClip.clientHeight + 1, '医院长文本按行数截断（scrollH ' +
+    (hClip ? hClip.scrollHeight : 0) + ' > clientH ' + (hClip ? hClip.clientHeight : 0) + '）');
   const rowHNow = rh();
   // 不能断言 ≤34：表格里还有「合并患者名/医院/适应症」等多行长文本单元格，
   // 其固有高度会顶住行高（--row-h 只是 td 的 height 下限，不是上限）。

@@ -292,7 +292,7 @@ const SALES = [
       "★ 浮窗链路不调用 normalizePurchases（那是同日合并口径，会吃掉同日明细）");
 
     // 键绝不经 DOM 属性（含 \u0000 会被解析成 U+FFFD）——.p-link 上不得挂 data-*
-    const iPL = APP.indexOf('class="p-link"');
+    const iPL = APP.indexOf('class="p-link');   // 可能带附加类名（如 p-link clip1）
     ok(iPL > 0, "找到 .p-link 模板片段");
     const seg = APP.slice(iPL - 120, iPL + 160);
     ok(!/data-/.test(seg), "★ .p-link 片段里没有 data-* 属性（键由 rowByTr 回查）");
