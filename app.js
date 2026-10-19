@@ -293,6 +293,21 @@ function origFuTime(m) {
 }
 
 /* ============ 合并计算（核心） ============ */
+// 由一条随访记录自身字段推出「未购药原因」的 key（与 buildRows 的自动判定同一口径）。
+// 用途：① 计算行的自动原因　② 导入回传表时判断「这条原因是不是自动判定出来的」——
+// 若是，导入侧不该把它写成人工点选，否则下一轮有新的真实随访也会被这条旧快照压住。
+function fuReasonKey(fu) {
+  if (!fu) return "";
+  const c = M.classifyFuReason(fu);
+  if (!c) return "";
+  const k = c.key === "dropout"
+    ? ("dropout_" + (c.detail === "换药" ? "switch" : c.detail === "经济" ? "econ" : c.detail === "去世" ? "death" : "other"))
+    : c.key === "prolong"
+      ? ("prolong_" + (c.detail === "医嘱" ? "doctor" : "self"))
+      : c.key;
+  return flattenReasonTree(state.reasonTree).some(x => x.key === k) ? k : "";
+}
+
 // 1) 按患者（电话/姓名）聚合销售记录 → 每患者每品种的购药时间序列（含购药数量）
 // 2) 应购药日期 = 按「周期算法」推进库存耗尽日（数量是否放大见「按数量计算」品种开关）
 // 3) 匹配随访：应购药日前最近一次（同品种优先；无则其他品种；再无则之后最早一条）
@@ -396,8 +411,10 @@ function buildRows() {
   const fuDate = fu => P.datePart(fu.exec_time) || P.datePart(fu.plan_time) || null;
 
   // 回传记录判定：服务摘要 =「跟进回传」（见文件末尾 CB_SUMMARY_TYPE 的说明）。
-  // 回传表不是真实随访任务，只是「用户在看板里填的备注 / 未购药原因」的载体，
-  // **不含任何随访信号字段**（用药状态 / 是否按时购药 / 停药原因…）。
+  // 回传表的本质是「用户在看板里填的备注 / 未购药原因」的载体，**不是一次真实随访任务**；
+  // 2026-10-19 起它额外带了 9 列随访状态快照（原随访类型/时间 + 用药状态…），
+  // 所以现在它**能**参与判定 —— 但「日期=导出当天、类型=跟进回传」仍是假的任务身份，
+  // 因此匹配时先只用真实随访；仅当该患者没有任何真实随访时才用回传记录兜底。
   const isCallbackFu = fu => String(fu.summary_type || "").trim() === CB_SUMMARY_TYPE;
 
   // 从「该患者」的候选随访里挑最合适的一条：应购药日前最近一次；若都在其后则取最早一条。
@@ -484,18 +501,7 @@ function buildRows() {
       const subKey = k + "::" + fam;
       // 自动判定原因 key（dropout 细分 dropout_switch/econ/death/other；prolong 细分 prolong_doctor/self；仅保留分类树中存在的分类）
       const treeKeys = flattenReasonTree(state.reasonTree).map(f => f.key);
-      let autoReason = "";
-      if (matched) {
-        const c = M.classifyFuReason(matched);
-        if (c) {
-          const k = c.key === "dropout"
-            ? ("dropout_" + (c.detail === "换药" ? "switch" : c.detail === "经济" ? "econ" : c.detail === "去世" ? "death" : "other"))
-            : c.key === "prolong"
-              ? ("prolong_" + (c.detail === "医嘱" ? "doctor" : "self"))
-              : c.key;
-          if (treeKeys.includes(k)) autoReason = k;
-        }
-      }
+      let autoReason = fuReasonKey(matched);
       // 跨药房事实兜底：随访文本判定不出原因时，用客观事实预填「转渠道」
       // 优先级：人工点选 > 随访文本自动判定 > 跨药房事实
       if (!autoReason && pharmacyNote && treeKeys.includes("channel")) autoReason = "channel";
@@ -1787,7 +1793,12 @@ function applyCallbackRecords(followups) {
     // 同 line 的 reason 解析：用 hasOwnProperty 判「有没有被人工点选过」，
     // 这样用户点选「未标」（空串）也算已有编辑，不会被导入的回传值盖掉。
     if (rk && !Object.prototype.hasOwnProperty.call(STORE.reasonOverrides, nk)) {
-      STORE.reasonOverrides[nk] = rk; nReason++;
+      // 回传表导出的是「该行当时的判定结果」——人工点选的、自动判定的、空白的都在里面。
+      // 若这条记录**自身字段**就能推出同一个原因（＝当初是自动判定出来的），
+      // 就不要再写成人工点选：否则下一轮来了新的真实随访，也会被这条旧快照压住不更新。
+      // 只有当原因无法由记录字段复现（如跨药房兜底、人工点选了与文本不符的分类）时才固定下来。
+      if (fuReasonKey(fu) !== rk) STORE.reasonOverrides[nk] = rk;
+      nReason++;
     }
   }
   return { nNote, nReason };
@@ -2669,13 +2680,13 @@ $("#exportBtn").onclick = () => {
 
 /* ============ 随访回传表导出（供下一轮作为随访数据回传） ============ */
 // 回传标记：识别签名用固定值。导入侧据此把数据回流到
-//   · 备注 → STORE.notes　· 未购药原因 → STORE.reasonOverrides
-//   · 随访状态快照（原随访类型/时间 + 各信号列）→ 作为该患者本轮可用的随访来源
+//   · 备注 → STORE.notes　· 未购药原因 → STORE.reasonOverrides（仅当该原因不是自动判定出来的）
+//   · 随访状态列 → 该行当前的随访判断字段，作为「本日这次随访记录」回传
 const CB_TASK_STATUS = "已完成";
 const CB_SUMMARY_TYPE = "跟进回传";
 // 回传表列（顺序即导出顺序）：既满足导入侧的类型识别签名（任务状态+服务摘要+联系电话），
 // 又能被逐字段映射回随访记录。强制明文，否则回传后无法匹配到患者。
-// 随访状态快照列：**追加在原有 10 列之后**，前 10 列的位置与含义完全不变
+// 随访状态列：**追加在原有 10 列之后**，前 10 列的位置与含义完全不变
 //（导入侧的类型识别签名、旧版回传表都依赖它们）。
 //
 // 为什么必须带：实测（tests/_probe_reason_loss.js）只上传「销售 + 回传表」时，
@@ -2684,6 +2695,11 @@ const CB_SUMMARY_TYPE = "跟进回传";
 //   · 随访类型变成「跟进回传」、随访时间变成导出当天 → 患者随访信息被顶掉
 // 带上这些列后，回传记录本身就能完整复现「上一轮真实随访」的判定结果，不必再重复上传原始随访表。
 // 列名严格对齐 mapping.js 的关键字规则（KEYWORD_RULES / KEYWORD_RULES_MULTI），否则映射不回 fu 字段。
+//
+// 取值口径（2026-10-19 用户确认）：**全部取「该行当时的状态」原样，不做任何过滤**。
+//   · 自动判定出的原因、人工点选的原因、空白（未标）→ 一律照导出；
+//   · 状态列取该行当前匹配到的随访记录的原始字段值，为空就留空。
+//   即「页面这一刻是什么，回传表就是什么」，回传后照原样还原。
 const CB_FU_STATE_COLS = [
   ["原随访类型", r => origFuType(r._matched)],
   ["原随访时间", r => origFuTime(r._matched)],
@@ -2700,6 +2716,15 @@ function fuField(r, key) {
   const m = r && r._matched;
   return m && m[key] != null ? String(m[key]) : "";
 }
+// 该行「未购药原因」的最终取值：人工点选 > 自动判定 > 空（空＝未标）。
+// ⚠ 必须导出这个「结果」而不是只导出人工点选值：用户只填了备注、没动原因时，
+//   自动判定出来的原因同样要跟着回传，否则回传后原因就丢了（用户 2026-10-19 明确要求）。
+// 用 hasOwnProperty 判定「有没有被人工点选过」：点选「未标」存的是空串，按真值判断会被自动原因顶掉。
+function resolvedReasonKey(r) {
+  const k = noteKey(r);
+  if (Object.prototype.hasOwnProperty.call(STORE.reasonOverrides, k)) return STORE.reasonOverrides[k] || "";
+  return (r && r.reason) || "";
+}
 const CB_COLS = [
   ["任务状态", () => CB_TASK_STATUS],
   ["服务摘要", () => CB_SUMMARY_TYPE],
@@ -2708,7 +2733,7 @@ const CB_COLS = [
   ["产品", r => r.product || ""],
   ["执行时间", () => refToday()],
   ["执行人", r => r.executor || ""],
-  ["未购药原因", r => STORE.reasonOverrides[noteKey(r)] ? reasonLabel(state.reasonTree, STORE.reasonOverrides[noteKey(r)]) : ""],
+  ["未购药原因", r => reasonLabel(state.reasonTree, resolvedReasonKey(r))],
   ["跟进备注", r => STORE.notes[noteKey(r)] || ""],
   ["随访小结", r => r.fu_note || ""],
   ...CB_FU_STATE_COLS,
@@ -2764,9 +2789,9 @@ async function doExportCallback() {
     `已导出 ${rows.length} 条跟进回传记录。\n\n` +
     "下次分析时，把该文件与销售明细一起上传即可：\n" +
     "· 跟进备注会回填到「跟进备注」列（仍可编辑）\n" +
-    "· 未购药原因等同人工点选\n" +
+    "· 「未购药原因」按该行当前的结果原样带走（自动判定 / 人工点选 / 空白都一样）\n" +
     "· 右侧 9 列（原随访类型/时间、用药状态、是否按时购药、易脱落、停药/推迟原因）" +
-    "是该患者上一轮的随访状态快照，回传后照原样还原，**不必再重复上传原始随访表**\n" +
+    "是该行当前的状态，回传后照原样还原，**不必再重复上传原始随访表**\n" +
     "· 该表不参与「匹配随访」竞争，不会顶掉本轮的原始随访表\n\n" +
     "⚠️ 该表含明文姓名、电话与随访内容，请仅在团队内部流转。"
   );
