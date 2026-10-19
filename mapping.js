@@ -100,8 +100,9 @@ const KEYWORD_RULES_MULTI = [
   // 「是否判定患者属于易脱落（失访/停药）高风险？」；历史任务表为「是否脱落 / 是否确认脱落」
   ["is_dropout", ["是否判定患者属于易脱落", "是否判定患者属于易脱落（失访/停药）高风险", "是否脱落", "是否确认脱落"]],
   ["dropout_reason", ["判断为易脱落的原因", "脱落原因", "脱落/流失原因"]],
-  // 「还在按照处方继续使用百悦泽/百泽安」
-  ["still_using", ["还在按照处方继续使用"]],
+  // 「还在按照处方继续使用百悦泽/百泽安」「是否继续使用百悦泽」——真实模板的列名带品种名，
+  // 所以除了裸短语，还要认「继续使用」这个共同片段（品种可增删，不能写死成两个品种）。
+  ["still_using", ["还在按照处方继续使用", "继续使用"]],
   ["near_usage", ["患者近一次用药情况"]],
   ["delay_reason", ["推迟用药的原因", "延迟用药的具体原因", "未按计划持续用药原因"]],
   ["stop_reason", ["停药的原因是什么", "停药的具体原因", "停止用药，主要是谁的建议"]],
@@ -235,6 +236,20 @@ function followupSignal(fu) {
   // 7. 任务状态修正：超期未购药随访任务 + 已按时购药=否 已在上文处理；执行失败/未执行不参与
   if (fu.task_status && /执行失败|超期未完成/.test(fu.task_status) && /超期未购药/.test(fu.summary_type || "")) {
     return { signal: "nonstd", reason: "超期未购药随访:" + fu.task_status };
+  }
+  // 8. 记录自带的「未购药原因」分类 → 信号（跨表结构归一化，2026-10-19）
+  //    看板导出的回传表**没有**随访模板的状态问答列，但它把当天的结论写在「未购药原因」列里
+  //    （脱落·经济 / 推迟购药 / 转渠道 / 随访失败未探寻原因 …）。
+  //    这里按同一套正则把分类归一成信号，回传记录在后续计算里照样能标出「已脱落 / 预判延期」。
+  //    真实随访表没有这一列 → reason_label 为空，本步不产生任何影响。
+  const declaredReason = String(fu.reason_label || "").trim();
+  if (declaredReason) {
+    if (/脱落|转渠道|停药|停用|失访|去世|不再治疗|放弃治疗/.test(declaredReason)) {
+      return { signal: "dropout", reason: "未购药原因:" + declaredReason };
+    }
+    if (/推迟|延迟|延后|延长|周期|减量|减药|未按时|不依从|随访失败|未探寻/.test(declaredReason)) {
+      return { signal: "nonstd", reason: "未购药原因:" + declaredReason };
+    }
   }
   return { signal: parts.length ? "normal" : "unknown", reason: parts.join("；") };
 }

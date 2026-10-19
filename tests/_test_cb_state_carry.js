@@ -2,12 +2,14 @@
 //
 // 口径：**点「导出回传表」＝记录导出当天的一次随访**。所以回传表不是另一类数据，
 // 回传后它就是一条普通随访记录，与随访表走同一套匹配与判定 —— 不特殊加权、也不特殊降权。
-// 回传表的状态列用的是随访表原列名（用药状态/是否按时购药/停药原因…），映射回来即完整随访记录。
+// 回传表只装它当场真正知道的东西（身份/日期/结论/备注），**不复制**随访模板的状态问答列；
+// 缺失的「随访信号」由它自带的「未购药原因」分类在 M.followupSignal 里归一化反推。
 //
-// 本测试锁定四件事：
+// 本测试锁定五件事：
 //   [1] 基准：真实随访 → 行字段
-//   [2] 只上传「销售 + 回传表」→ 状态/信号/原因与真实随访一致；随访类型/时间＝这条记录自己的
-//   [3] 旧版回传表（无状态列）→ 状态列空，原因推不出（旧表的固有限制，如实断言）
+//   [2] 只上传「销售 + 回传表」→ 原因/信号与真实随访等价；随访类型/时间＝这条记录自己的
+//   [3] 回传表没写原因（未标）→ 信号推不出，如实保留（不伪造）
+//   [3b] 历史 17 列回传表（带状态列）仍按普通随访字段读取（向后兼容）
 //   [4] 同一套日期规则：新随访比回传表晚 → 新随访胜出；回传表比真实随访晚 → 回传表胜出
 //       （★ 这一条锁住「回传表不会把上一轮结论钉死在页面上」）
 //   [5] 人工点选的未购药原因优先于记录自身判定
@@ -76,42 +78,49 @@ eq('随访信号文字', row.fu_signal, '用药状态:已停药');
 eq('自动判定未购药原因', row.reason, 'dropout_econ');
 const BASE = { fu_signal: row.fu_signal, fu_signal_kind: row.fu_signal_kind, reason: row.reason };
 
-console.log('\n=== [2] 只上传「销售 + 回传表」→ 状态/原因与真实随访一致 ===');
-// 这就是 doExportCallback 导出的那一行的 fu 侧内容
-const CB_FULL = {
+console.log('\n=== [2] 只上传「销售 + 回传表」→ 原因/信号与真实随访等价 ===');
+// 这就是 doExportCallback 现在导出的那一行的 fu 侧内容：
+// 只有身份 / 日期 / 当次结论（未购药原因）/ 备注，没有任何随访模板状态列
+const CB_NEW = {
   product: FAM, patient_name: NAME, phone: PHONE,
   summary_type: '跟进回传', task_status: '已完成',
   exec_time: '2026-10-16',                    // 导出当天＝这条随访记录的时间
   executor: '刘倩', follow_note: '已电话随访，患者接听',
-  callback_note: '上一轮备注', reason_label: '',
-  usage_status: '已停药', purchased_on_time: '已停药', is_dropout: '是',
-  stop_reason: '经济困难，负担不起', delay_reason: null, dropout_reason: null, still_using: null,
-};
-ST.sales = [SALE('2026-08-01')];
-ST.followups = [CB_FULL];
-row = App.buildRows()[0];
-eq('随访类型＝这条记录自己的（跟进回传）', row.fu_type, '跟进回传');
-eq('随访时间＝导出当天', row.fu_time, '2026-10-16');
-eq('★ 随访信号还原', row.fu_signal, BASE.fu_signal);
-eq('★ 随访信号类别还原', row.fu_signal_kind, BASE.fu_signal_kind);
-eq('★ 未购药原因还原（不是未标）', row.reason, BASE.reason);
-eq('随访人还原', row.executor, '刘倩');
-
-console.log('\n=== [3] 旧版回传表（无状态列）→ 状态空、原因推不出 ===');
-const CB_OLD = {
-  product: FAM, patient_name: NAME, phone: PHONE,
-  summary_type: '跟进回传', task_status: '已完成', exec_time: '2026-10-16',
-  executor: '', follow_note: '已电话随访，患者接听', callback_note: '上一轮备注',
+  callback_note: '上一轮备注',
+  reason_label: '脱落·经济',                   // 该行当时的结论（自动判定/人工点选都长这样）
   usage_status: null, purchased_on_time: null, is_dropout: null,
   stop_reason: null, delay_reason: null, dropout_reason: null, still_using: null,
 };
 ST.sales = [SALE('2026-08-01')];
-ST.followups = [CB_OLD];
+ST.followups = [CB_NEW];
+row = App.buildRows()[0];
+eq('随访类型＝这条记录自己的（跟进回传）', row.fu_type, '跟进回传');
+eq('随访时间＝导出当天', row.fu_time, '2026-10-16');
+eq('★ 未购药原因还原（不是未标）', row.reason, BASE.reason);
+eq('★ 随访信号类别由「未购药原因」归一化还原', row.fu_signal_kind, BASE.fu_signal_kind);
+eq('★ 信号文字取自记录自身分类（不再复制用药状态列）', row.fu_signal, '未购药原因:脱落·经济');
+eq('随访人还原', row.executor, '刘倩');
+
+console.log('\n=== [3] 回传表没写原因（未标）→ 信号推不出，如实保留 ===');
+const CB_NOLABEL = Object.assign({}, CB_NEW, { reason_label: '' });
+ST.sales = [SALE('2026-08-01')];
+ST.followups = [CB_NOLABEL];
 row = App.buildRows()[0];
 eq('仍是这条记录（不是空）', row.fu_type, '跟进回传');
-eq('随访信号推不出（小结无关键词）', row.fu_signal_kind, 'unknown');
-eq('★ 未购药原因丢失（旧表只能到这一步）', row.reason, '');
-ok('★ 对照：带状态列的回传表能还原同一个原因', BASE.reason === 'dropout_econ');
+eq('未购药原因为空（导出时就是未标）', row.reason, '');
+eq('随访信号也推不出 → unknown', row.fu_signal_kind, 'unknown');
+ok('★ 对照：只要写了原因就能还原', BASE.reason === 'dropout_econ');
+
+console.log('\n=== [3b] 历史 17 列回传表（带状态列）仍按普通随访字段读取 ===');
+const CB_17 = Object.assign({}, CB_NEW, {
+  usage_status: '已停药', purchased_on_time: '已停药', is_dropout: '是',
+  stop_reason: '经济困难，负担不起', reason_label: '',
+});
+ST.sales = [SALE('2026-08-01')];
+ST.followups = [CB_17];
+row = App.buildRows()[0];
+eq('旧 17 列格式-原因仍可推出', row.reason, BASE.reason);
+eq('旧 17 列格式-信号仍为 dropout', row.fu_signal_kind, 'dropout');
 
 console.log('\n=== [4] 同一套日期规则：谁更近谁说话 ===');
 // 应购药日 10-22（10-01 购药 + 21 天），两条记录都早于应购日 → 取最近的一条
@@ -123,7 +132,7 @@ const REAL_NEW = Object.assign({}, REAL_FU, {
 });
 // 4a 新随访（10-17）晚于回传表（10-12）→ 新随访胜出
 ST.sales = dueBase;
-ST.followups = [Object.assign({}, CB_FULL, { exec_time: '2026-10-12' }), REAL_NEW];
+ST.followups = [Object.assign({}, CB_NEW, { exec_time: '2026-10-12' }), REAL_NEW];
 row = App.buildRows()[0];
 eq('★ 新随访更近 → 用新随访（类型）', row.fu_type, '常规随访');
 eq('★ 新随访更近 → 用新随访（时间）', row.fu_time, '2026-10-17');
@@ -131,7 +140,7 @@ eq('★ 原因跟随新随访（推迟），不被旧回传表钉成脱落', row
 
 // 4b 回传表（10-18）晚于真实随访（09-01）→ 回传表胜出（它就是更近的那条随访）
 ST.sales = dueBase;
-ST.followups = [REAL_FU, Object.assign({}, CB_FULL, { exec_time: '2026-10-18' })];
+ST.followups = [REAL_FU, Object.assign({}, CB_NEW, { exec_time: '2026-10-18' })];
 row = App.buildRows()[0];
 eq('回传表更近 → 用回传表（类型）', row.fu_type, '跟进回传');
 eq('回传表更近 → 用回传表（时间）', row.fu_time, '2026-10-18');
@@ -139,7 +148,7 @@ eq('原因跟随回传表记录', row.reason, 'dropout_econ');
 
 console.log('\n=== [5] 人工点选的未购药原因优先于记录自身判定 ===');
 ST.sales = [SALE('2026-08-01')];
-ST.followups = [CB_FULL];
+ST.followups = [CB_NEW];
 ST.notes = {}; ST.reasonOverrides = {};
 row = App.buildRows()[0];
 ST.reasonOverrides[row._key + '::' + FAM] = 'delay';

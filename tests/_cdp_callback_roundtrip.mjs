@@ -390,11 +390,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       log("  STORE 备注 = " + JSON.stringify(r3.note) + " / 原因 = " + JSON.stringify(r3.reason));
 
       ok(r3.matchedSummary === "跟进回传", "★ 更近的那条记录（回传表）胜出 —— 同一套日期规则，实际 = " + JSON.stringify(r3.matchedSummary));
-      // 注意：第 1 轮只传了销售明细（没有随访表），所以那份回传表的状态列本来就是空的。
-      // 它是最新记录 → 按它的内容判定，状态为空。这是「同一套规则」的必然结果，不是状态丢失；
-      // 「状态能否随回传表还原」由 tests/_cdp_cb_state_carry.mjs 专门覆盖（那份回传表是从有随访的一轮导出的）。
-      ok(r3.sigKind === "unknown" && r3.fuSignal === "",
-        "胜出的回传记录本身不含状态（第 1 轮无随访）→ 状态列空，实际 = " + JSON.stringify(r3.sigKind));
+      // 注意：第 1 轮只传了销售明细（没有随访表），这份回传表里唯一的判定信息就是用户点选的
+      // 「未购药原因」= 推迟购药。它胜出时信号由这条原因归一化得到 nonstd
+      //（回传表不再复制用药状态等模板状态列，所以信号只能从它自己的结论来）。
+      // 「有随访的一轮导出的回传表能否还原原来的信号」由 tests/_cdp_cb_state_carry.mjs 覆盖。
+      ok(r3.sigKind === "nonstd" && /推迟购药/.test(String(r3.fuSignal)),
+        "胜出的回传记录按自身「未购药原因」给出信号（nonstd）→ 实际 = " + JSON.stringify(r3.sigKind) + " / " + JSON.stringify(r3.fuSignal));
       ok(r3.fuType === "跟进回传" && /^\d{4}-\d{2}-\d{2}$/.test(String(r3.fuTime)),
         "★ 随访类型/时间＝这条回传记录自己 —— 实际 = " + JSON.stringify(r3.fuType) + " / " + JSON.stringify(r3.fuTime));
       ok(r3.note === NOTE && r3.rowReason === REASON_KEY, "★ 备注/原因仍然接续 —— 原因 = " + JSON.stringify(r3.rowReason));
