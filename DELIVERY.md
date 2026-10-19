@@ -1574,13 +1574,26 @@ python tests/_ghpages_sync.py        # SOURCE = index.single.html，内含两道
 > | 引用 `vendor/` | 是（必需） | **否（必须内联）** |
 > | 用途 | 本地开发、直接双击 | **gh-pages 发布、离线分发** |
 
-**Q：整个站点打不开，浏览器是 GitHub 的「Site not found · GitHub Pages」404，但构建记录明明写着 built？**
-⚠️ **2026-10-19 实测遇到，是账号侧问题，不是发布没同步——别在这里反复重建。**
+**Q：某个环境访问 Pages 站点，返回 GitHub 的「Site not found · GitHub Pages」404，但另一些环境能正常打开？**
+⚠️ **2026-10-19 实测踩过坑：这是「出口/边缘节点差异」，站点本身没挂。我第一版结论写错了，已更正。**
 
 先看清 404 的**具体长相**：body 约 **9,115 字节**、`<title>Site not found &middot; GitHub Pages</title>`、
 正文一句 `There isn't a GitHub Pages site here.`。这与「仓库里 index.html 缺失」造成的 404 不是同一个页面。
 
-**三步排除内容问题（都正常就说明代码侧无责）**：
+**当天的真实情况**（两边同时成立）：
+
+| 观测点 | 结果 |
+|---|---|
+| 本机沙箱出口（走 WorkBuddy 代理），四个边缘 IP `185.199.108~111.153` 直连 | **全部 404** |
+| 同一 IP 上 `jekyll.github.io` | 200（说明链路通、不是网络问题） |
+| TLS 证书 | 真实 `*.github.io`（Let's Encrypt），**没有被中间人替换** |
+| 同账号另一个仓库 `followup_dashboard` | 也是 404 |
+| **用户自己的浏览器** | **能正常打开，而且是最新构建的新版** |
+
+→ 结论：**内容侧没有问题，也不是账号被停用，而是我这个出口拿到的 CDN 站点映射过期了。**
+**「我这边 404」不能当作「线上挂了」的证据**——同一台机器上，沙箱出口和用户浏览器出口可能不是同一条路径。
+
+**内容侧是否正常，用这三条查（都正常就说明代码侧无责）**：
 
 ```bash
 # 1) 站点对象本身：status=built / public=true / source.branch=gh-pages
@@ -1591,20 +1604,17 @@ curl -H "Authorization: token $TK" https://api.github.com/repos/Lynx-Fanlv/reper
 curl -H "Authorization: token $TK" "https://api.github.com/repos/Lynx-Fanlv/reperchace_dashboard/contents/index.html?ref=gh-pages"
 ```
 
-**决定性判据**：**同账号下另一个仓库**（`followup_dashboard`）的 Pages 也返回同样的 404
-→ 与单个仓库、与本次改动都无关，是**账号级的站点映射失效**。
+**判定「站点真的挂了」的唯一标准**：让**用户本人**在浏览器里强刷之后仍然打不开
+（或者用手机蜂窝网络打开也 404）。只看我这边的 curl/urllib 结果，会误判。
 
-**已试过且无效**（别重复浪费半小时）：手动 `POST /pages/builds`、`PUT /pages` 重设 `source=gh-pages:/`、
-关掉强制执行 HTTPS（会报 `The certificate does not exist yet`）、等 CDN、强刷。GitHub Pages 状态页当时 `operational`。
+**判定「线上是不是最新版」，别用字节数，用功能指纹**（沙箱出口可能拿到过期映射或旧副本）：
 
-**只能在账号侧解决**（API 代劳不了：token 没有 `user:email` scope，读不到邮箱验证状态）：
+1. 地址栏加 `?v=<日期>` 或者 `Ctrl + Shift + R` 强刷，绕开浏览器缓存；
+2. 患者状态是**「未到期」**的那一行，「跟进备注」列是**可输入框**（新版）/ 灰色「**—**」（旧版）；
+3. 导出「随访回传表」，最后一列是**「停药的原因是什么」**（新版 19 列）/ 「随访小结」（旧版 10 列）。
 
-1. `https://github.com/settings/pages` 看页面上有没有站点被停用／需要确认的提示；
-2. `https://github.com/settings/emails` 确认主邮箱**已验证**——邮箱未验证会让 Pages 站点不对外提供；
-3. 都没有的话走 https://support.github.com 报「Pages 站点对整账号 404，构建成功」。
+两点都对 = 线上就是修复后的新版。若只有旧版特征，先怀疑**浏览器缓存**，不要怀疑发布。
 
-> 这期间要给同事用，就直接发**单文件版 `index.single.html`**（双击即用，不依赖任何站点）。
-> 注意存储按 origin 隔离：`file://` 与 `https://` 的本地留档互不可见，详见第 282 行那条说明。
 
 ---
 
