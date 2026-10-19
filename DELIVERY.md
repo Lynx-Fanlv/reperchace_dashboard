@@ -1574,6 +1574,38 @@ python tests/_ghpages_sync.py        # SOURCE = index.single.html，内含两道
 > | 引用 `vendor/` | 是（必需） | **否（必须内联）** |
 > | 用途 | 本地开发、直接双击 | **gh-pages 发布、离线分发** |
 
+**Q：整个站点打不开，浏览器是 GitHub 的「Site not found · GitHub Pages」404，但构建记录明明写着 built？**
+⚠️ **2026-10-19 实测遇到，是账号侧问题，不是发布没同步——别在这里反复重建。**
+
+先看清 404 的**具体长相**：body 约 **9,115 字节**、`<title>Site not found &middot; GitHub Pages</title>`、
+正文一句 `There isn't a GitHub Pages site here.`。这与「仓库里 index.html 缺失」造成的 404 不是同一个页面。
+
+**三步排除内容问题（都正常就说明代码侧无责）**：
+
+```bash
+# 1) 站点对象本身：status=built / public=true / source.branch=gh-pages
+curl -H "Authorization: token $TK" https://api.github.com/repos/Lynx-Fanlv/reperchace_dashboard/pages
+# 2) 构建记录：status=built、error 为空、commit 就是最新 gh-pages head
+curl -H "Authorization: token $TK" https://api.github.com/repos/Lynx-Fanlv/reperchace_dashboard/pages/builds/latest
+# 3) 分支内容：size 必须等于本地单文件版字节数（LF 归一后）
+curl -H "Authorization: token $TK" "https://api.github.com/repos/Lynx-Fanlv/reperchace_dashboard/contents/index.html?ref=gh-pages"
+```
+
+**决定性判据**：**同账号下另一个仓库**（`followup_dashboard`）的 Pages 也返回同样的 404
+→ 与单个仓库、与本次改动都无关，是**账号级的站点映射失效**。
+
+**已试过且无效**（别重复浪费半小时）：手动 `POST /pages/builds`、`PUT /pages` 重设 `source=gh-pages:/`、
+关掉强制执行 HTTPS（会报 `The certificate does not exist yet`）、等 CDN、强刷。GitHub Pages 状态页当时 `operational`。
+
+**只能在账号侧解决**（API 代劳不了：token 没有 `user:email` scope，读不到邮箱验证状态）：
+
+1. `https://github.com/settings/pages` 看页面上有没有站点被停用／需要确认的提示；
+2. `https://github.com/settings/emails` 确认主邮箱**已验证**——邮箱未验证会让 Pages 站点不对外提供；
+3. 都没有的话走 https://support.github.com 报「Pages 站点对整账号 404，构建成功」。
+
+> 这期间要给同事用，就直接发**单文件版 `index.single.html`**（双击即用，不依赖任何站点）。
+> 注意存储按 origin 隔离：`file://` 与 `https://` 的本地留档互不可见，详见第 282 行那条说明。
+
 ---
 
 ## 附录 A：字段映射关键字全表
