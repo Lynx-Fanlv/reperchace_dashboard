@@ -273,6 +273,25 @@ function stockEndAfter(purchases, cycle, fam) {
   return end;
 }
 
+/* ============ 回传记录的「原随访」取值 ============ */
+// 回传表（服务摘要=「跟进回传」）既承载 备注/未购药原因，也承载上一轮的随访状态快照。
+// 它自身的两列是「身份标记」，不能当随访内容用：
+//   服务摘要 = 跟进回传（识别用） / 执行时间 = 导出当天（导出时间）
+// 因此取值时优先用回传表额外携带的「原随访类型 / 原随访时间」（列名见 CB_FU_STATE_COLS）。
+// matched 既可能是真实随访，也可能是回传记录，两种都走这里，结果一致。
+function origFuType(m) {
+  if (!m) return "";
+  if (m.orig_fu_type) return m.orig_fu_type;
+  if (String(m.summary_type || "").trim() === CB_SUMMARY_TYPE) return ""; // 回传记录且没带原值 → 不冒充随访类型
+  return m.summary_type || "";
+}
+function origFuTime(m) {
+  if (!m) return "";
+  if (m.orig_fu_time) return m.orig_fu_time;
+  if (String(m.summary_type || "").trim() === CB_SUMMARY_TYPE) return ""; // 回传记录且没带原值 → 不显示导出当天
+  return P.datePart(m.exec_time) || P.datePart(m.plan_time) || "";
+}
+
 /* ============ 合并计算（核心） ============ */
 // 1) 按患者（电话/姓名）聚合销售记录 → 每患者每品种的购药时间序列（含购药数量）
 // 2) 应购药日期 = 按「周期算法」推进库存耗尽日（数量是否放大见「按数量计算」品种开关）
@@ -519,8 +538,12 @@ function buildRows() {
         days_to_due: days,
         repurchased: purchasedInWeek,
         repur_part: repurPart, // 应回购细分：应回未回 / 应回已回（其他主状态为空）
-        fu_time: matched ? (P.datePart(matched.exec_time) || P.datePart(matched.plan_time) || "") : "",
-        fu_type: matched ? (matched.summary_type || "") : "",
+        // 随访类型 / 时间：matched 可能是「上一轮的回传记录」。回传记录自身的 服务摘要=跟进回传、
+        // 执行时间=导出当天，直接取会把「常规随访 2027-01-05」变成「跟进回传 导出当天」——
+        // 表现为「传回回传表后，患者的随访信息被导出的时间顶掉了」。
+        // 故回传记录一律取它携带的「原随访类型 / 原随访时间」（见 origFuType / origFuTime）。
+        fu_time: matched ? origFuTime(matched) : "",
+        fu_type: matched ? origFuType(matched) : "",
         executor: matched ? (matched.executor || "") : "",
         fu_note: matched ? (matched.follow_note || "") : "",
         fu_signal: sig.signal === "unknown" ? "" : sig.reason,
@@ -1172,8 +1195,10 @@ function rowHtml(r, idx, cols) {
   else if (days < 0) dueSub = `<span class="sub over">逾期${-days}天</span>`;
   const dueTxt = `<div class="due-cell">` +
     (dueDateTxt ? `<span class="d-date">${esc(dueDateTxt)}</span>` : "") + dueSub + `</div>`;
-  // 跟进备注：仅「应回购 / 已逾期」显示填写窗口，其余大类显示 —
-  const canNote = r.status === "应回购" || r.status === "已逾期";
+  // 跟进备注：**任何状态都渲染填写窗口**（用户 2026-09-30 定）。
+  // 早先只在「应回购 / 已逾期」渲染，其余状态整格不渲染 —— 于是「上一轮填过、经回传表接续回来」
+  // 的备注在本轮状态变成「未到期」时会整条消失（数据还在 STORE 里，用户以为丢了）。
+  // 备注是用户自己写的内容，可见性不能跟着状态变，否则回传闭环会出现「填了却看不见」。
   // 长文本单元格：单行截断 + 悬停显示全文 + 点击展开（td 上加 title 会与内部元素重复，故统一挂在此包装上）
   const clip = (txt, cls) => {
     const s = String(txt == null ? "" : txt);
@@ -1245,9 +1270,8 @@ function rowHtml(r, idx, cols) {
       return `<td><span class="tag-prod" title="${esc(s)}">${esc(s)}</span></td>`;
     }
     if (key === "note") {
-      if (!canNote) return `<td><span class="muted">—</span></td>`;
-      // 不写 data-key（含 \u0000 会失配），初值也不写 value 属性：
-      // 备注内容可能含引号，走属性会被截断 —— 初值由 renderTable 绑定处用 property 赋值。
+      // 任何状态都给输入框（见 rowHtml 里「跟进备注」处的说明）。初值仍由绑定处用 property 赋值。
+      // 注意：不写 data-key / value 属性 —— 键含 \u0000 会被 HTML 解析成 U+FFFD；值可能含引号。
       return `<td><input class="note-input" placeholder="填写跟进备注" ${SNAP_MODE ? "disabled" : ""}></td>`;
     }
     if (key === "patient_name" || key === "phone") {
@@ -1744,6 +1768,8 @@ $("#clearPendingBtn").onclick = () => {
 // 回传数据回流：识别回传表记录（服务摘要=「跟进回传」），把上一轮填写的内容接回本轮
 //  · 「跟进备注」列 → 回填 STORE.notes（该列仍可继续编辑）
 //  · 「未购药原因」标签 → 反查为分类 key 写入 STORE.reasonOverrides（等同人工点选，优先于自动判定）
+//  · 随访状态快照列 → 留在 STORE.followups 里，由 buildRows 作为该患者的随访来源使用
+//    （所以本轮不必再重复上传原始随访表；原始随访表若也上传，则照旧以它为优先，回传记录只兜底）
 // 已有本轮编辑的字段不覆盖，避免刚填的内容被导入数据抹掉
 function applyCallbackRecords(followups) {
   let nNote = 0, nReason = 0;
@@ -2642,11 +2668,38 @@ $("#exportBtn").onclick = () => {
 };
 
 /* ============ 随访回传表导出（供下一轮作为随访数据回传） ============ */
-// 回传标记：识别签名用固定值，导入侧据此把数据回流到备注与未购药原因
+// 回传标记：识别签名用固定值。导入侧据此把数据回流到
+//   · 备注 → STORE.notes　· 未购药原因 → STORE.reasonOverrides
+//   · 随访状态快照（原随访类型/时间 + 各信号列）→ 作为该患者本轮可用的随访来源
 const CB_TASK_STATUS = "已完成";
 const CB_SUMMARY_TYPE = "跟进回传";
 // 回传表列（顺序即导出顺序）：既满足导入侧的类型识别签名（任务状态+服务摘要+联系电话），
 // 又能被逐字段映射回随访记录。强制明文，否则回传后无法匹配到患者。
+// 随访状态快照列：**追加在原有 10 列之后**，前 10 列的位置与含义完全不变
+//（导入侧的类型识别签名、旧版回传表都依赖它们）。
+//
+// 为什么必须带：实测（tests/_probe_reason_loss.js）只上传「销售 + 回传表」时，
+// 回传记录是唯一可用的随访来源，而它原先只带「随访小结」一列文本 ——
+//   · 未购药原因写在「停药的原因 / 推迟用药的原因」等信号列时，自动判定必丢 → 原因变「未标」
+//   · 随访类型变成「跟进回传」、随访时间变成导出当天 → 患者随访信息被顶掉
+// 带上这些列后，回传记录本身就能完整复现「上一轮真实随访」的判定结果，不必再重复上传原始随访表。
+// 列名严格对齐 mapping.js 的关键字规则（KEYWORD_RULES / KEYWORD_RULES_MULTI），否则映射不回 fu 字段。
+const CB_FU_STATE_COLS = [
+  ["原随访类型", r => origFuType(r._matched)],
+  ["原随访时间", r => origFuTime(r._matched)],
+  ["患者目前的用药状态是？", r => fuField(r, "usage_status")],
+  ["是否已按时购药", r => fuField(r, "purchased_on_time")],
+  ["是否判定患者属于易脱落（失访/停药）高风险", r => fuField(r, "is_dropout")],
+  ["判断为易脱落的原因", r => fuField(r, "dropout_reason")],
+  ["还在按照处方继续使用", r => fuField(r, "still_using")],
+  ["推迟用药的原因", r => fuField(r, "delay_reason")],
+  ["停药的原因是什么", r => fuField(r, "stop_reason")],
+];
+// 取该行匹配到的随访记录上的某个信号字段；回传记录本身也带这些字段，故两种来源都适用。
+function fuField(r, key) {
+  const m = r && r._matched;
+  return m && m[key] != null ? String(m[key]) : "";
+}
 const CB_COLS = [
   ["任务状态", () => CB_TASK_STATUS],
   ["服务摘要", () => CB_SUMMARY_TYPE],
@@ -2658,6 +2711,7 @@ const CB_COLS = [
   ["未购药原因", r => STORE.reasonOverrides[noteKey(r)] ? reasonLabel(state.reasonTree, STORE.reasonOverrides[noteKey(r)]) : ""],
   ["跟进备注", r => STORE.notes[noteKey(r)] || ""],
   ["随访小结", r => r.fu_note || ""],
+  ...CB_FU_STATE_COLS,
 ];
 
 // 原因标签 → 分类 key 反查（用于回传数据回流；path 优先，其次节点名）
@@ -2697,7 +2751,9 @@ async function doExportCallback() {
   });
   for (const r of rows) ws.addRow(CB_COLS.map(([, get]) => get(r)));
   // 列宽
-  const widths = [12, 12, 14, 16, 12, 14, 12, 20, 40, 40];
+  // 列宽：前 10 列沿用原值；后 9 列为随访状态快照（表头较长，给足宽度避免竖排换行）
+  const widths = [12, 12, 14, 16, 12, 14, 12, 20, 40, 40,
+                  14, 14, 22, 16, 28, 20, 24, 22, 24];
   ws.columns.forEach((c, i) => { c.width = widths[i] || 14; });
   ws.views = [{ state: "frozen", ySplit: 1 }];
   const buf = await wb.xlsx.writeBuffer();
@@ -2706,11 +2762,13 @@ async function doExportCallback() {
     `随访回传_${d}.xlsx`);
   alert(
     `已导出 ${rows.length} 条跟进回传记录。\n\n` +
-    "下次分析时，把该文件与销售/随访/周期表一起上传即可：\n" +
+    "下次分析时，把该文件与销售明细一起上传即可：\n" +
     "· 跟进备注会回填到「跟进备注」列（仍可编辑）\n" +
     "· 未购药原因等同人工点选\n" +
-    "· 该表只是你填写内容的载体，不会替代随访任务，也不会影响随访判定\n\n" +
-    "⚠️ 该表含明文姓名与电话，请仅在团队内部流转。"
+    "· 右侧 9 列（原随访类型/时间、用药状态、是否按时购药、易脱落、停药/推迟原因）" +
+    "是该患者上一轮的随访状态快照，回传后照原样还原，**不必再重复上传原始随访表**\n" +
+    "· 该表不参与「匹配随访」竞争，不会顶掉本轮的原始随访表\n\n" +
+    "⚠️ 该表含明文姓名、电话与随访内容，请仅在团队内部流转。"
   );
 }
 $("#exportCallbackBtn").onclick = () => doExportCallback();

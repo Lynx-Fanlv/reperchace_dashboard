@@ -10,6 +10,10 @@ tests/_styled_test.xlsx
 # 回环验收的中间产物（每跑一次都重新生成：导出落盘的 xlsx + 两轮截图）
 tests/_cb_roundtrip_export.xlsx
 tests/_cb_roundtrip_shot_*.png
+# 回传状态携带 / 回流诊断的中间产物（同上，导出落盘的 xlsx + 截图）
+tests/_cb_statecarry_export.xlsx
+tests/_probe_cb_export.xlsx
+tests/_probe_cb_shot.png
 # CDP 验收截图（每次运行都重新生成，不入库）
 tests/*_shot.png
 tests/*_shot2.png

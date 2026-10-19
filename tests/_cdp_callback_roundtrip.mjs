@@ -331,7 +331,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     log("  界面取值 = " + JSON.stringify(dom));
     ok(dom && dom.noteBox === NOTE, "★ 界面上「跟进备注」框里看得见回填内容");
     ok(dom && !!dom.tagText && dom.tagText.includes("推迟购药"), "★ 界面上「未购药原因」标签显示为「" + (dom && dom.tagText) + "」");
-    ok(dom && dom.fuType === "跟进回传", "界面上「随访类型」列 = " + (dom && dom.fuType));
+    // 随访类型：本轮没有真实随访表，回传记录也不该冒充随访类型（旧行为会显示「跟进回传」+ 导出当天）。
+    // 第 1 轮没有匹配到任何真实随访 → 回传表里「原随访类型」为空 → 这里应为空。
+    ok(dom && dom.fuType === "", "★ 随访类型不再被「跟进回传」冒充（实际 = " + JSON.stringify(dom && dom.fuType) + "）");
+    ok(dom && (dom.fuTime === "" || dom.fuTime === "—"), "★ 随访时间不再被导出当天冒充（实际 = " + JSON.stringify(dom && dom.fuTime) + "）");
 
     // 「随访信号」列：回传表不带信号字段，记下实际值供判断（不硬断言）
     log("  （观察项）「随访信号」列 = " + JSON.stringify(dom && dom.fuSignal) + "，「随访时间」列 = " + JSON.stringify(dom && dom.fuTime));

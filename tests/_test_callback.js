@@ -48,7 +48,11 @@ const S = App.state, ST = App.STORE;
 // 三条名单行：A 填了备注、B 点选了原因、C 什么都没填
 // _key 必须与 buildRows 生成的一致（姓名\u0000电话），否则回传表往返后键对不上、备注绑不回行
 const rowA = { _key: P.patientKey('张小三', '13800001111'), product: '百泽安', patient_name: '张小三', phone: '13800001111', physician: '李大夫',
-  executor: '刘倩', fu_note: '原始随访小结：患者表示会按时购药', status: '应回购', repur_part: '应回未回', reason: '', days_to_due: 2 };
+  executor: '刘倩', fu_note: '原始随访小结：患者表示会按时购药', status: '应回购', repur_part: '应回未回', reason: '', days_to_due: 2,
+  // 匹配到的真实随访：回传表要把它的随访状态一起带走（原随访类型/时间 + 各信号列）
+  _matched: { summary_type: '常规随访', exec_time: '2026-09-01 09:00:00', plan_time: '2026-09-01 09:00:00',
+    usage_status: '已停药', purchased_on_time: '已停药', is_dropout: '是', dropout_reason: null,
+    still_using: null, delay_reason: null, stop_reason: '经济困难，负担不起', follow_note: '原始随访小结：患者表示会按时购药' } };
 const rowB = { _key: P.patientKey('李四', '13900002222'), product: '百悦泽', patient_name: '李四', phone: '13900002222', physician: '王医生',
   executor: '高金敏', fu_note: '原始随访小结：电话未接通', status: '已逾期', repur_part: '', reason: '', days_to_due: -5 };
 const rowC = { _key: P.patientKey('王五', '13700003333'), product: '百泽安', patient_name: '王五', phone: '13700003333', physician: '赵医生',
@@ -77,7 +81,13 @@ App.DATA.rows = [rowA, rowB, rowC];
   const ws = wb.worksheets[0];
   eq('sheet 名', ws.name, '随访回传');
   const head = ws.getRow(1).values.filter(Boolean);
-  eq('表头', head, ['任务状态', '服务摘要', '患者姓名', '联系电话', '产品', '执行时间', '执行人', '未购药原因', '跟进备注', '随访小结']);
+  // 前 10 列是既有契约（导入侧的类型识别签名 + 旧版回传表都依赖它），位置与含义不得变动
+  eq('前 10 列表头不变', head.slice(0, 10),
+    ['任务状态', '服务摘要', '患者姓名', '联系电话', '产品', '执行时间', '执行人', '未购药原因', '跟进备注', '随访小结']);
+  eq('总列数（10 + 9 列随访状态快照）', head.length, 19);
+  eq('追加列', head.slice(10), ['原随访类型', '原随访时间', '患者目前的用药状态是？', '是否已按时购药',
+    '是否判定患者属于易脱落（失访/停药）高风险', '判断为易脱落的原因', '还在按照处方继续使用',
+    '推迟用药的原因', '停药的原因是什么']);
   eq('数据行数', ws.rowCount - 1, 2);
 
   const idx = {}; head.forEach((h, i) => idx[h] = i + 1);
@@ -93,6 +103,14 @@ App.DATA.rows = [rowA, rowB, rowC];
   eq('未购药原因（人工选定的行）', r2[idx['未购药原因']], '脱落·经济');
   eq('未购药原因（未点选的行留空）', r1[idx['未购药原因']], '');
   ok('执行时间为日期', /^\d{4}-\d{2}-\d{2}$/.test(String(r1[idx['执行时间']])));
+  // —— 随访状态快照列：让「只传销售 + 回传表」也能还原患者状态 ——
+  eq('A-原随访类型（不写成「跟进回传」）', r1[idx['原随访类型']], '常规随访');
+  eq('A-原随访时间（不写成导出当天）', r1[idx['原随访时间']], '2026-09-01');
+  eq('A-用药状态', r1[idx['患者目前的用药状态是？']], '已停药');
+  eq('A-是否已按时购药', r1[idx['是否已按时购药']], '已停药');
+  eq('A-易脱落判定', r1[idx['是否判定患者属于易脱落（失访/停药）高风险']], '是');
+  eq('A-停药原因', r1[idx['停药的原因是什么']], '经济困难，负担不起');
+  eq('B-无匹配随访时状态列留空', r2[idx['原随访类型']] == null || r2[idx['原随访类型']] === '', true);
 
   console.log('\n[3] 该文件能被导入侧识别为「随访数据」');
   eq('表类型识别', M.detectTableType(head), 'followup');
