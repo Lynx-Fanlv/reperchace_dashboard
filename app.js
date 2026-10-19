@@ -1195,7 +1195,7 @@ function rowHtml(r, idx, cols) {
   else if (days < 0) dueSub = `<span class="sub over">逾期${-days}天</span>`;
   const dueTxt = `<div class="due-cell">` +
     (dueDateTxt ? `<span class="d-date">${esc(dueDateTxt)}</span>` : "") + dueSub + `</div>`;
-  // 跟进备注：**任何状态都渲染填写窗口**（用户 2026-09-30 定）。
+  // 跟进备注：**任何状态都渲染填写窗口**（用户 2026-10-19 定）。
   // 早先只在「应回购 / 已逾期」渲染，其余状态整格不渲染 —— 于是「上一轮填过、经回传表接续回来」
   // 的备注在本轮状态变成「未到期」时会整条消失（数据还在 STORE 里，用户以为丢了）。
   // 备注是用户自己写的内容，可见性不能跟着状态变，否则回传闭环会出现「填了却看不见」。
