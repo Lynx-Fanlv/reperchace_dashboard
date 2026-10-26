@@ -115,6 +115,8 @@ let SUMMARY = { text: "" }; // 当前整体小结文本（快照保存用）
 let ALL_ROWS = [];          // 全量计算行（小结统计用，不随筛选变化）
 let DATA = { rows: [] };
 let CURRENT = { summary: null };
+// 最近一次 buildRows 里「因销售时间为空 / 商品名称为空而没进名单」的行数（数据概览回显用）
+let LAST_DROP = { noTime: 0, noProd: 0 };
 
 const $ = s => document.querySelector(s);
 
@@ -347,8 +349,15 @@ function buildRows() {
   // 只按电话会在「同号不同名」时把两个患者并成一个；只按姓名会在「重名」时并成一个。
   const patMap = {}; // key: 姓名\u0000电话
   const keyOf = r => P.patientKey(r.patient_name, r.phone);
+  // 行级丢弃计数：销售时间为空 / 商品名称为空的明细行不会进入名单。
+  // 以前这里是静默 continue，界面上毫无痕迹 —— 用户只能看到"明细里有、名单里没有"却查不出原因。
+  // 现在把条数带出去写在数据概览里，任何时候都能对上账。
+  let dropNoTime = 0, dropNoProd = 0;
   for (const s of scoped) {
-    if (!s.sales_time || !s.product) continue;
+    if (!s.sales_time || !s.product) {
+      if (!s.sales_time) dropNoTime++; else dropNoProd++;
+      continue;
+    }
     const k = keyOf(s);
     const p = (patMap[k] = patMap[k] || { name: s.patient_name || "未知", phone: s.phone || "", byProduct: {} });
     if (s.patient_name) p.name = s.patient_name;
@@ -552,10 +561,36 @@ function buildRows() {
     const da = a.due_date || "9999-12-31", db = b.due_date || "9999-12-31";
     return da.localeCompare(db);
   });
+  LAST_DROP = { noTime: dropNoTime, noProd: dropNoProd };
   return rows;
 }
 
 /* ============ 筛选 ============ */
+// 搜索归一：去空白 + 全角转半角 + 转小写。
+// 为什么要这样：姓名里可能混进全角空格（"张　三"）、电话可能被录成全角数字、
+// 用户从别处复制来的文本常带首尾空白 —— 直接 includes 会搜不到，
+// 而「明明在名单里却搜不到」是最难自查的一类问题（2026-10-26）。
+function searchNorm(v) {
+  return String(v == null ? "" : v)
+    .replace(/[\uFF01-\uFF5E]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[\u3000\s]+/g, "")
+    .toLowerCase();
+}
+// 搜索覆盖的列：凡是列表里看得见的文字都应能被搜到。
+// 之前只搜 7 个字段，导致「仅会员号」脱敏方式下屏幕上唯一可见的身份（会员号）、
+// 科室、随访小结、跟进备注、未购药原因的文字全都搜不到。
+const SEARCH_FIELDS = ["patient_name", "phone", "physician", "department", "hospital", "pharmacy",
+  "product", "executor", "fu_type", "fu_signal", "member_id"];
+function searchHaystack(r) {
+  const parts = [];
+  for (const f of SEARCH_FIELDS) if (r[f]) parts.push(r[f]);
+  if (r.reason) parts.push(reasonLabel(state.reasonTree, r.reason)); // 存的是 key，搜的是标签文字
+  const note = STORE.notes[noteKey(r)];
+  if (note) parts.push(note);
+  if (r.fu_note) parts.push(r.fu_note);
+  return searchNorm(parts.join("\n"));
+}
+
 // opts.skipCat=true 时跳过状态/下钻/应回购细分筛选（用于计算「状态计数基数」：
 // 状态卡片计数跟随 品种/医院/随访人/关键词 筛选，但不受状态本身筛选影响）
 function filterRows(rows, opts) {
@@ -570,13 +605,8 @@ function filterRows(rows, opts) {
   if (state.pharmacies.size) rs = rs.filter(r => state.pharmacies.has(r.pharmacy || "未知"));
   if (state.executors.size) rs = rs.filter(r => state.executors.has(r.executor || "未知"));
   if (state.q) {
-    const ql = state.q.trim().toLowerCase();
-    rs = rs.filter(r => {
-      for (const f of ["patient_name", "phone", "physician", "hospital", "pharmacy", "product", "executor"]) {
-        if (r[f] && String(r[f]).toLowerCase().includes(ql)) return true;
-      }
-      return false;
-    });
+    const ql = searchNorm(state.q);
+    if (ql) rs = rs.filter(r => searchHaystack(r).includes(ql));
   }
   return rs;
 }
@@ -1894,24 +1924,46 @@ $("#startBtn").onclick = async () => {
     // 回传数据回流（上一轮导出的「随访回传表」在本轮自动接续）
     const cb = applyCallbackRecords(res.followups);
     $("#board").classList.remove("hidden");
+    renderDedupNotice();
+    // 按数据实际出现的品种同步标准周期：先清掉不在本批数据里的品种（含人工改过的值），再补缺省
+    const products = [...new Set(dd.records.map(s => s.product).filter(Boolean))];
+    syncStdCycles(products);
+    renderCycleInputs();
+    // ⚠ 分析 = 换了一批数据，上一批的筛选条件全部作废 —— 必须清空，否则会把本次的人挡住。
+    //
+    // 旧实现只重置了「品种」，而且把它设成 picked（= 本地有留档的品种）：
+    // 本次上传、但本地还没留档的品种会被这个筛选整个挡掉，表现为
+    // 「明细里明明有这个患者，列表里搜不到」（搜索是在筛选之后做的，挡在外面就搜不出来）。
+    // 现在统一交给 resetListFilters()，品种筛选回到「不筛 = 全部」。
+    resetListFilters();
+    // 默认不设应购日期范围（=全部显示）；用户选择范围后表单按范围裁剪
+    state.page = 1;
+    await refresh();
+    // 数据概览：把「有数据但没能进入名单」的部分显式列出来，让条数永远对得上。
+    // dropNote 来自本次 buildRows（销售时间为空 / 商品名称为空的明细行，不会成为名单行）。
+    const dropNote = [];
+    if (LAST_DROP.noTime) dropNote.push(`${LAST_DROP.noTime} 条缺销售时间`);
+    if (LAST_DROP.noProd) dropNote.push(`${LAST_DROP.noProd} 条缺商品名称`);
+    const issues = res.issues || [];
+    const unkSheets = issues.filter(x => x.kind === "unknown");
+    const errFiles = issues.filter(x => x.kind === "error");
     $("#dataInfo").textContent =
       `销售明细 ${dd.records.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人` +
       (arcLoaded.length
         ? ` · 已并入历史：` + arcLoaded.map(x =>
             `${x.product} ${x.months === null ? `全部${x.total}条` : `${x.count}/${x.total}条`}`).join("、")
         : "") +
-      (cb.nNote ? ` · 已接续回传 ${cb.nNote} 条备注` : "");
-    renderDedupNotice();
-    // 按数据实际出现的品种同步标准周期：先清掉不在本批数据里的品种（含人工改过的值），再补缺省
-    const products = [...new Set(dd.records.map(s => s.product).filter(Boolean))];
-    syncStdCycles(products);
-    renderCycleInputs();
-    // 品种筛选：勾了历史其他品种时设成「已加载的品种」，让当前看图范围可见；
-    // 未勾历史时清空（=全部），顺带避免上一次的筛选残留挡住本次数据。
-    state.products = picked.length ? new Set(picked) : new Set();
-    // 默认不设应购日期范围（=全部显示）；用户选择范围后表单按范围裁剪
-    state.page = 1;
-    await refresh();
+      (cb.nNote ? ` · 已接续回传 ${cb.nNote} 条备注` : "") +
+      (dropNote.length ? ` · 未进名单 ${dropNote.join("、")}` : "") +
+      (unkSheets.length ? ` · 跳过未识别的表 ${unkSheets.length} 张（${unkSheets.reduce((n, x) => n + x.rows, 0)} 行）` : "") +
+      (errFiles.length ? ` · 解析失败 ${errFiles.length} 个文件` : "");
+    // 只对「整份文件解析失败」弹提示：这类丢失最彻底，不提示的话用户完全无从得知。
+    // 未识别的表只在概览里计数，避免每张说明页都弹窗打扰。
+    if (errFiles.length) {
+      alert("以下文件解析失败，其中的患者不会出现在名单里：\n" +
+        errFiles.slice(0, 5).map(x => `· ${x.file}（${x.message}）`).join("\n") +
+        (errFiles.length > 5 ? `\n…另有 ${errFiles.length - 5} 个` : ""));
+    }
   } catch (err) {
     alert("分析失败：" + (err && err.message ? err.message : err));
   } finally {
@@ -2308,11 +2360,19 @@ $("#clearAllBtn").onclick = () => {
 };
 
 /* ============ 筛选交互 ============ */
-$("#clearBtn").onclick = () => {
-  state.cats.clear(); state.reasons.clear(); state.repurParts.clear(); state.products.clear(); state.hospitals.clear(); state.pharmacies.clear(); state.executors.clear();
-  state.weekSel = "this"; state.refDate = "";
+// 清空「名单筛选」这一组条件（不含周视图/参考日这类口径设置）。
+// 两个调用点：① 用户点「清空条件」；② 每次「开始分析」完成后 —— 上一批的筛选属于旧数据，
+// 留着只会把本次的人挡住（尤其是「品种」：它会直接把整个品种的患者挡在搜索之外）。
+function resetListFilters() {
+  state.cats.clear(); state.reasons.clear(); state.repurParts.clear();
+  state.products.clear(); state.hospitals.clear(); state.pharmacies.clear(); state.executors.clear();
   state.q = "";
-  $("#searchInput").value = "";
+  const si = $("#searchInput");
+  if (si) si.value = "";
+}
+$("#clearBtn").onclick = () => {
+  resetListFilters();
+  state.weekSel = "this"; state.refDate = "";
   state.page = 1; refresh();
 };
 // 周视图：上周/本周/下周（单选）——所选周 = 状态判定的时间基准
@@ -3070,6 +3130,8 @@ function loadSnapshot(snap) {
 }
 
 window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, syncStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason, askSnapshotFams, snapshotFileName, doSnapshot,
+  // 筛选 / 搜索（回归测试直接验「分析后筛选清零」「搜索能按会员号/科室/备注命中」）
+  resetListFilters, searchNorm, searchHaystack, SEARCH_FIELDS, getDropStat: () => LAST_DROP,
   // 视图微调（列宽/行高）—— 导出供回归测试直接验边界夹取逻辑
   applyColWidth, clearColWidths, setRowHeight, resetColWidthsOnly,
   COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H,

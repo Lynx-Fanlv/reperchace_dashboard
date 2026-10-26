@@ -687,7 +687,7 @@
 
     <!-- 筛选区 + 脱敏/列显隐 -->
     <div class="filterbar" style="z-index:600"> <!-- 高于脱敏栏(500)，保证展开的多选面板不被遮蔽 -->
-      <input type="text" id="searchInput" class="fb-search" placeholder="搜索 患者 / 电话 / 医生 / 医院 / 药房">
+      <input type="text" id="searchInput" class="fb-search" placeholder="搜索 患者 / 电话 / 会员号 / 医生 / 科室 / 医院 / 药房 / 备注">
       <div class="ms" id="prodMs">
         <button class="ms-btn" type="button" id="prodMsBtn">品种：全部 <span class="ms-caret">▾</span></button>
         <div class="ms-panel hidden" id="prodMsPanel">
@@ -868,6 +868,12 @@ const SUBSTATUS = ["正常状态", "预判延期", "已脱落"];
 // ---------------------------------------------------------------------------
 const TABLE_SIGNATURES = [
   ["sales", ["销售时间", "商品名称", "会员姓名", "药房名称"]],
+  // 销售明细的第二种导出格式：国药四川（晟德）POS 系统的「销售明细表」。
+  // 列名与上面的连锁报表**完全不同**（订单号 / 创建日期 / 收费日期 / 门店名称 / 商品名 / 患者姓名 / 联系方式），
+  // 早前只认第一种签名 → 这种表被判成 unknown 整张跳过，里面的患者一个都进不了名单
+  // （2026-10-26 用户报障："销售明细里有、网页列表里搜不到"）。
+  // 单独一组签名而不是把关键字并进上一组：并进去会把「任何含患者姓名+门店的表」都算得像销售表。
+  ["sales", ["POS订单号", "收费日期", "患者姓名", "门店名称"]],
   ["followup", ["任务状态", "服务摘要", "联系电话", "计划执行时间"]],
   ["cycle", ["用药周期"]],
 ];
@@ -877,22 +883,32 @@ const TABLE_SIGNATURES = [
 // 状态相关字段全部走 MULTI（收集所有命中列，行内跨列读取，取有值者）。
 const KEYWORD_RULES = [
   // ---------- 销售明细 ----------
-  ["sales_time",    ["销售时间", "购药时间", "成交时间"]],
+  // 购药/收费时间：**收费日期优先**，其次才用创建日期。
+  // 为什么优先收费日期：POS 导出里「创建日期 = 下单时间」「收费日期 = 实际付款/完成时间」，
+  // 两者在实测数据里有 8% 的行不是同一天（配送单隔天送达才收费）；回购预测要的是"患者哪天真正拿到药"。
+  // 为什么还要兜底创建日期：未收费/退单行的收费日期可能为空，只认收费日期会让这些行在日期上落空 → 整行被丢弃。
+  ["sales_paid_time", ["收费日期"]],
+  ["sales_time",    ["销售时间", "购药时间", "成交时间", "创建日期"]],
   // 小票号：销售明细的天然唯一凭据，用于跨文件自动去重（见 pipeline.dedupSales）。
   // 实测本机 36 份真实销售明细、34 个 sheet 中 35 个都有「小票号」列，且行级填充率 100%。
   // 注意：去重只用「小票号」，「订单号」不参与判定（口径已与用户确认）。
-  ["ticket_no",     ["小票号", "小票编号", "票据号", "销售小票"]],
+  // POS 格式没有「小票号」列，它的 POS订单号 就是那笔销售的小票凭据（同一 POS 订单可含多行商品），故纳入。
+  // ⚠ 关键字必须写小写：列名在匹配前已被 normHeader 转成小写（"POS订单号" → "pos订单号"）。
+  ["ticket_no",     ["小票号", "小票编号", "票据号", "销售小票", "pos订单号"]],
   ["order_status",  ["订单状态"]],
-  ["product",       ["商品名称", "药品名称", "产品名称", "产品", "药品"]],
+  ["product",       ["商品名称", "药品名称", "产品名称", "商品名", "产品", "药品"]],
   ["qty",           ["销售数量", "数量"]],
   ["amount",        ["含税金额", "无税金额", "实收金额", "金额"]],
   ["member_id",     ["会员号", "会员编号", "会员卡号"]],
   ["patient_name",  ["会员姓名", "客户姓名", "患者姓名", "姓名"]],
-  ["phone",         ["会员电话", "手机号", "联系电话", "手机", "电话"]],
+  // 「联系方式」是 POS 格式的电话列（实测填充率 100%）；同一张表里还有「购药人电话」，
+  // 实测填充率 0%，且语义是代购人的号码 —— 靠"命中数相同时取靠前列"的规则让联系方式胜出。
+  ["phone",         ["会员电话", "手机号", "联系电话", "手机", "电话", "联系方式"]],
   // 医院 = 只认「医疗单位」列（精确匹配，见 mapping.js 的 EXACT_ONLY_FIELDS）。
   // 不要改回宽松关键字：销售明细里可能同时存在「首诊医院」「就诊医院」「医院」等列，
   // 宽松匹配会按列顺序命中其中一个，取到与业务口径不符的值。
-  ["hospital",      ["医疗单位"]],
+  // POS 格式没有「医疗单位」，它的医院语义在「处方医院」列（精确匹配，同样不做子串命中）。
+  ["hospital",      ["医疗单位", "处方医院"]],
   ["pharmacy",      ["药房名称", "门店", "药店名称", "药店", "药房"]],
   ["physician",     ["处方医生", "开单医生", "医生"]],
   ["department",    ["处方科室", "科室", "就诊科室"]],
@@ -949,6 +965,15 @@ const KEYWORD_RULES_MULTI = [
 // 典型例子 hospital=「医疗单位」——销售明细里常有「首诊医院」「就诊医院」「某医院」等列，
 // 子串匹配会按列顺序任取其一，导致医院字段取错列。
 const EXACT_ONLY_FIELDS = new Set(["hospital"]);
+
+// 候选列排除规则：列名命中这些词的不作为该字段的取值列。
+// 典型例子 product——POS 导出的列顺序是「国控药品编号 … 商品名」，
+// 「国控药品编号」里含关键字「药品」而排在前面，会把品种取成一个编码（GKH000003680），
+// 于是整个品种维度都错了（名单按编码分组、品种筛选里冒出一串编号）。
+// 这类"编码/编号/代码"列一律不参与取值。
+const FIELD_EXCLUDE = {
+  product: /编号|编码|代码|条码|barcode/,
+};
 
 function normHeader(h) {
   return String(h == null ? "" : h).replace(/\s+/g, "").toLowerCase();
@@ -1136,7 +1161,7 @@ if (typeof window !== "undefined") {
     PRODUCT_FAMILIES, normalizeProduct, CATEGORIES, REPUR_PARTS, SUBSTATUS,
     TABLE_SIGNATURES, detectTableType, normHeader, _cell, _gtext,
     isPlaceholder, followupSignal, classifyFuReason, KEYWORD_RULES, KEYWORD_RULES_MULTI,
-    EXACT_ONLY_FIELDS, kwHit,
+    EXACT_ONLY_FIELDS, FIELD_EXCLUDE, kwHit,
   };
 }
 })();
@@ -1211,6 +1236,11 @@ function mapColumns(tableType, rawCols) {
     for (const kw of rules.find(r => r[0] === field)[1]) if (M.kwHit(field, nc, kw)) h++;
     return h;
   };
+  // 该列名是否被排除（如 product 不接受「国控药品编号」这类编码列，见 mapping.js 的 FIELD_EXCLUDE）
+  const excluded = (field, nc) => {
+    const ex = M.FIELD_EXCLUDE && M.FIELD_EXCLUDE[field];
+    return !!(ex && ex.test(nc));
+  };
   for (const [field, kws] of rules) {
     if (!prefix(field)) continue;
     if (field === "exec_time") {
@@ -1219,6 +1249,7 @@ function mapColumns(tableType, rawCols) {
       const cand = candList.filter(([idx]) => !used.has(idx) && !normHeader(rawCols[idx]).includes("计划") && normHeader(rawCols[idx]).includes("执行时间"));
       let best = null, bestHits = 0;
       for (const [idx, nc] of cand) {
+        if (excluded(field, nc)) continue;
         const hits = hitsOf(field, nc);
         if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
       }
@@ -1228,6 +1259,7 @@ function mapColumns(tableType, rawCols) {
     let best = null, bestHits = 0;
     for (const [idx, nc] of candList) {
       if (used.has(idx)) continue;
+      if (excluded(field, nc)) continue;
       const hits = hitsOf(field, nc);
       if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
     }
@@ -1292,9 +1324,14 @@ function _gtext(row, colmap, field) {
 
 // ---------- 销售明细归一化 ----------
 function normalizeSales(row, colmap, sourceFile, sheetName, i) {
+  // 购药时间：优先「收费日期」（POS 格式的实际付款时间），没有再退回「销售时间/创建日期」。
+  // 两种取法都统一成 YYYY-MM-DD —— 后续所有周期推进、周末比较都是按"天"做的。
+  const paid = _gtext(row, colmap, "sales_paid_time");
+  const sold = _gtext(row, colmap, "sales_time");
+  const timeRaw = paid || sold;
   const rec = {
     source: "sales", _row_id: `${sourceFile}::sales::${sheetName}::${i}`,
-    sales_time: datePart(_gtext(row, colmap, "sales_time")) || _gtext(row, colmap, "sales_time"),
+    sales_time: datePart(timeRaw) || timeRaw,
     // 小票号：仅用于跨文件自动去重（dedupSales），不参与任何业务计算、不进列表、不进导出。
     ticket_no: _gtext(row, colmap, "ticket_no") || null,
     order_status: _gtext(row, colmap, "order_status") || null,
@@ -1402,14 +1439,21 @@ async function loadWorkbook(file) {
   return out;
 }
 
+// 返回值里的 issues 记录「有数据但没能进名单」的表，供界面明确告知：
+//   { kind:"unknown", file, sheet, rows }  ← 表类型没识别出来，整张表被跳过
+//   { kind:"error",   file, sheet:"", rows:0, message } ← 文件解析直接抛错
+// 为什么必须回传：这些数据以前只 console.warn，界面上毫无痕迹 ——
+// 用户看到的就是"销售明细里明明有这个人，名单里搜不到"（2026-10-26 报障）。
 async function processFiles(files) {
-  const result = { sales: [], followups: [], cycles: {} };
+  const result = { sales: [], followups: [], cycles: {}, issues: [] };
   for (const f of files) {
     try {
       const sheets = await loadWorkbook(f);
       for (const sh of sheets) {
         if (sh.ttype === "unknown") {
           console.warn("无法识别表类型:", sh.source_file, sh.sheet_name, sh.cols.slice(0, 10));
+          // 完全空白的 sheet（如导出时留下的空页）不报，避免每次上传都弹提示
+          if (sh.rows.length) result.issues.push({ kind: "unknown", file: sh.source_file, sheet: sh.sheet_name, rows: sh.rows.length });
           continue;
         }
         if (sh.ttype === "cycle") {
@@ -1425,6 +1469,7 @@ async function processFiles(files) {
       }
     } catch (e) {
       console.warn("处理文件失败", f.name, e);
+      result.issues.push({ kind: "error", file: f.name, sheet: "", rows: 0, message: (e && e.message) || String(e) });
     }
   }
   return result;
@@ -2079,6 +2124,8 @@ let SUMMARY = { text: "" }; // 当前整体小结文本（快照保存用）
 let ALL_ROWS = [];          // 全量计算行（小结统计用，不随筛选变化）
 let DATA = { rows: [] };
 let CURRENT = { summary: null };
+// 最近一次 buildRows 里「因销售时间为空 / 商品名称为空而没进名单」的行数（数据概览回显用）
+let LAST_DROP = { noTime: 0, noProd: 0 };
 
 const $ = s => document.querySelector(s);
 
@@ -2311,8 +2358,15 @@ function buildRows() {
   // 只按电话会在「同号不同名」时把两个患者并成一个；只按姓名会在「重名」时并成一个。
   const patMap = {}; // key: 姓名\u0000电话
   const keyOf = r => P.patientKey(r.patient_name, r.phone);
+  // 行级丢弃计数：销售时间为空 / 商品名称为空的明细行不会进入名单。
+  // 以前这里是静默 continue，界面上毫无痕迹 —— 用户只能看到"明细里有、名单里没有"却查不出原因。
+  // 现在把条数带出去写在数据概览里，任何时候都能对上账。
+  let dropNoTime = 0, dropNoProd = 0;
   for (const s of scoped) {
-    if (!s.sales_time || !s.product) continue;
+    if (!s.sales_time || !s.product) {
+      if (!s.sales_time) dropNoTime++; else dropNoProd++;
+      continue;
+    }
     const k = keyOf(s);
     const p = (patMap[k] = patMap[k] || { name: s.patient_name || "未知", phone: s.phone || "", byProduct: {} });
     if (s.patient_name) p.name = s.patient_name;
@@ -2516,10 +2570,36 @@ function buildRows() {
     const da = a.due_date || "9999-12-31", db = b.due_date || "9999-12-31";
     return da.localeCompare(db);
   });
+  LAST_DROP = { noTime: dropNoTime, noProd: dropNoProd };
   return rows;
 }
 
 /* ============ 筛选 ============ */
+// 搜索归一：去空白 + 全角转半角 + 转小写。
+// 为什么要这样：姓名里可能混进全角空格（"张　三"）、电话可能被录成全角数字、
+// 用户从别处复制来的文本常带首尾空白 —— 直接 includes 会搜不到，
+// 而「明明在名单里却搜不到」是最难自查的一类问题（2026-10-26）。
+function searchNorm(v) {
+  return String(v == null ? "" : v)
+    .replace(/[\uFF01-\uFF5E]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[\u3000\s]+/g, "")
+    .toLowerCase();
+}
+// 搜索覆盖的列：凡是列表里看得见的文字都应能被搜到。
+// 之前只搜 7 个字段，导致「仅会员号」脱敏方式下屏幕上唯一可见的身份（会员号）、
+// 科室、随访小结、跟进备注、未购药原因的文字全都搜不到。
+const SEARCH_FIELDS = ["patient_name", "phone", "physician", "department", "hospital", "pharmacy",
+  "product", "executor", "fu_type", "fu_signal", "member_id"];
+function searchHaystack(r) {
+  const parts = [];
+  for (const f of SEARCH_FIELDS) if (r[f]) parts.push(r[f]);
+  if (r.reason) parts.push(reasonLabel(state.reasonTree, r.reason)); // 存的是 key，搜的是标签文字
+  const note = STORE.notes[noteKey(r)];
+  if (note) parts.push(note);
+  if (r.fu_note) parts.push(r.fu_note);
+  return searchNorm(parts.join("\n"));
+}
+
 // opts.skipCat=true 时跳过状态/下钻/应回购细分筛选（用于计算「状态计数基数」：
 // 状态卡片计数跟随 品种/医院/随访人/关键词 筛选，但不受状态本身筛选影响）
 function filterRows(rows, opts) {
@@ -2534,13 +2614,8 @@ function filterRows(rows, opts) {
   if (state.pharmacies.size) rs = rs.filter(r => state.pharmacies.has(r.pharmacy || "未知"));
   if (state.executors.size) rs = rs.filter(r => state.executors.has(r.executor || "未知"));
   if (state.q) {
-    const ql = state.q.trim().toLowerCase();
-    rs = rs.filter(r => {
-      for (const f of ["patient_name", "phone", "physician", "hospital", "pharmacy", "product", "executor"]) {
-        if (r[f] && String(r[f]).toLowerCase().includes(ql)) return true;
-      }
-      return false;
-    });
+    const ql = searchNorm(state.q);
+    if (ql) rs = rs.filter(r => searchHaystack(r).includes(ql));
   }
   return rs;
 }
@@ -3858,24 +3933,46 @@ $("#startBtn").onclick = async () => {
     // 回传数据回流（上一轮导出的「随访回传表」在本轮自动接续）
     const cb = applyCallbackRecords(res.followups);
     $("#board").classList.remove("hidden");
+    renderDedupNotice();
+    // 按数据实际出现的品种同步标准周期：先清掉不在本批数据里的品种（含人工改过的值），再补缺省
+    const products = [...new Set(dd.records.map(s => s.product).filter(Boolean))];
+    syncStdCycles(products);
+    renderCycleInputs();
+    // ⚠ 分析 = 换了一批数据，上一批的筛选条件全部作废 —— 必须清空，否则会把本次的人挡住。
+    //
+    // 旧实现只重置了「品种」，而且把它设成 picked（= 本地有留档的品种）：
+    // 本次上传、但本地还没留档的品种会被这个筛选整个挡掉，表现为
+    // 「明细里明明有这个患者，列表里搜不到」（搜索是在筛选之后做的，挡在外面就搜不出来）。
+    // 现在统一交给 resetListFilters()，品种筛选回到「不筛 = 全部」。
+    resetListFilters();
+    // 默认不设应购日期范围（=全部显示）；用户选择范围后表单按范围裁剪
+    state.page = 1;
+    await refresh();
+    // 数据概览：把「有数据但没能进入名单」的部分显式列出来，让条数永远对得上。
+    // dropNote 来自本次 buildRows（销售时间为空 / 商品名称为空的明细行，不会成为名单行）。
+    const dropNote = [];
+    if (LAST_DROP.noTime) dropNote.push(`${LAST_DROP.noTime} 条缺销售时间`);
+    if (LAST_DROP.noProd) dropNote.push(`${LAST_DROP.noProd} 条缺商品名称`);
+    const issues = res.issues || [];
+    const unkSheets = issues.filter(x => x.kind === "unknown");
+    const errFiles = issues.filter(x => x.kind === "error");
     $("#dataInfo").textContent =
       `销售明细 ${dd.records.length} 条 · 随访任务 ${res.followups.length} 条 · 用药周期 ${Object.keys(res.cycles).length} 人` +
       (arcLoaded.length
         ? ` · 已并入历史：` + arcLoaded.map(x =>
             `${x.product} ${x.months === null ? `全部${x.total}条` : `${x.count}/${x.total}条`}`).join("、")
         : "") +
-      (cb.nNote ? ` · 已接续回传 ${cb.nNote} 条备注` : "");
-    renderDedupNotice();
-    // 按数据实际出现的品种同步标准周期：先清掉不在本批数据里的品种（含人工改过的值），再补缺省
-    const products = [...new Set(dd.records.map(s => s.product).filter(Boolean))];
-    syncStdCycles(products);
-    renderCycleInputs();
-    // 品种筛选：勾了历史其他品种时设成「已加载的品种」，让当前看图范围可见；
-    // 未勾历史时清空（=全部），顺带避免上一次的筛选残留挡住本次数据。
-    state.products = picked.length ? new Set(picked) : new Set();
-    // 默认不设应购日期范围（=全部显示）；用户选择范围后表单按范围裁剪
-    state.page = 1;
-    await refresh();
+      (cb.nNote ? ` · 已接续回传 ${cb.nNote} 条备注` : "") +
+      (dropNote.length ? ` · 未进名单 ${dropNote.join("、")}` : "") +
+      (unkSheets.length ? ` · 跳过未识别的表 ${unkSheets.length} 张（${unkSheets.reduce((n, x) => n + x.rows, 0)} 行）` : "") +
+      (errFiles.length ? ` · 解析失败 ${errFiles.length} 个文件` : "");
+    // 只对「整份文件解析失败」弹提示：这类丢失最彻底，不提示的话用户完全无从得知。
+    // 未识别的表只在概览里计数，避免每张说明页都弹窗打扰。
+    if (errFiles.length) {
+      alert("以下文件解析失败，其中的患者不会出现在名单里：\n" +
+        errFiles.slice(0, 5).map(x => `· ${x.file}（${x.message}）`).join("\n") +
+        (errFiles.length > 5 ? `\n…另有 ${errFiles.length - 5} 个` : ""));
+    }
   } catch (err) {
     alert("分析失败：" + (err && err.message ? err.message : err));
   } finally {
@@ -4272,11 +4369,19 @@ $("#clearAllBtn").onclick = () => {
 };
 
 /* ============ 筛选交互 ============ */
-$("#clearBtn").onclick = () => {
-  state.cats.clear(); state.reasons.clear(); state.repurParts.clear(); state.products.clear(); state.hospitals.clear(); state.pharmacies.clear(); state.executors.clear();
-  state.weekSel = "this"; state.refDate = "";
+// 清空「名单筛选」这一组条件（不含周视图/参考日这类口径设置）。
+// 两个调用点：① 用户点「清空条件」；② 每次「开始分析」完成后 —— 上一批的筛选属于旧数据，
+// 留着只会把本次的人挡住（尤其是「品种」：它会直接把整个品种的患者挡在搜索之外）。
+function resetListFilters() {
+  state.cats.clear(); state.reasons.clear(); state.repurParts.clear();
+  state.products.clear(); state.hospitals.clear(); state.pharmacies.clear(); state.executors.clear();
   state.q = "";
-  $("#searchInput").value = "";
+  const si = $("#searchInput");
+  if (si) si.value = "";
+}
+$("#clearBtn").onclick = () => {
+  resetListFilters();
+  state.weekSel = "this"; state.refDate = "";
   state.page = 1; refresh();
 };
 // 周视图：上周/本周/下周（单选）——所选周 = 状态判定的时间基准
@@ -5034,6 +5139,8 @@ function loadSnapshot(snap) {
 }
 
 window.AppCore = { loadSnapshot, buildRows, filterRows, buildSummary, doExport, doExportCallback, callbackRows, applyCallbackRecords, reasonKeyFromLabel, disp, qtyNum, qtyScales, coverDays, normalizePurchases, stockEndAfter, renderCycleCfg, LIST_COLS, STORE, state, DATA, refresh, syncStdCycles, renderCycleInputs, renderTable, renderPagination, buildSummaryStats, buildSummaryText, renderSummaryPanel, getWeekRange, renderWeekBar, refToday, WEEK_LABEL, classifyFuReason: M.classifyFuReason, DEFAULT_REASON_TREE, cloneReasonTree, flattenReasonTree, reasonLabel, renderReasonManager, addReason, addReasonChild, renameReason, removeReason, askSnapshotFams, snapshotFileName, doSnapshot,
+  // 筛选 / 搜索（回归测试直接验「分析后筛选清零」「搜索能按会员号/科室/备注命中」）
+  resetListFilters, searchNorm, searchHaystack, SEARCH_FIELDS, getDropStat: () => LAST_DROP,
   // 视图微调（列宽/行高）—— 导出供回归测试直接验边界夹取逻辑
   applyColWidth, clearColWidths, setRowHeight, resetColWidthsOnly,
   COL_W, COL_MIN, COL_MAX, MIN_ROW_H, MAX_ROW_H, DEFAULT_ROW_H,

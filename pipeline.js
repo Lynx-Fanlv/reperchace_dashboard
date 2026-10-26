@@ -66,6 +66,11 @@ function mapColumns(tableType, rawCols) {
     for (const kw of rules.find(r => r[0] === field)[1]) if (M.kwHit(field, nc, kw)) h++;
     return h;
   };
+  // 该列名是否被排除（如 product 不接受「国控药品编号」这类编码列，见 mapping.js 的 FIELD_EXCLUDE）
+  const excluded = (field, nc) => {
+    const ex = M.FIELD_EXCLUDE && M.FIELD_EXCLUDE[field];
+    return !!(ex && ex.test(nc));
+  };
   for (const [field, kws] of rules) {
     if (!prefix(field)) continue;
     if (field === "exec_time") {
@@ -74,6 +79,7 @@ function mapColumns(tableType, rawCols) {
       const cand = candList.filter(([idx]) => !used.has(idx) && !normHeader(rawCols[idx]).includes("计划") && normHeader(rawCols[idx]).includes("执行时间"));
       let best = null, bestHits = 0;
       for (const [idx, nc] of cand) {
+        if (excluded(field, nc)) continue;
         const hits = hitsOf(field, nc);
         if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
       }
@@ -83,6 +89,7 @@ function mapColumns(tableType, rawCols) {
     let best = null, bestHits = 0;
     for (const [idx, nc] of candList) {
       if (used.has(idx)) continue;
+      if (excluded(field, nc)) continue;
       const hits = hitsOf(field, nc);
       if (hits > 0 && hits > bestHits) { bestHits = hits; best = idx; }
     }
@@ -147,9 +154,14 @@ function _gtext(row, colmap, field) {
 
 // ---------- 销售明细归一化 ----------
 function normalizeSales(row, colmap, sourceFile, sheetName, i) {
+  // 购药时间：优先「收费日期」（POS 格式的实际付款时间），没有再退回「销售时间/创建日期」。
+  // 两种取法都统一成 YYYY-MM-DD —— 后续所有周期推进、周末比较都是按"天"做的。
+  const paid = _gtext(row, colmap, "sales_paid_time");
+  const sold = _gtext(row, colmap, "sales_time");
+  const timeRaw = paid || sold;
   const rec = {
     source: "sales", _row_id: `${sourceFile}::sales::${sheetName}::${i}`,
-    sales_time: datePart(_gtext(row, colmap, "sales_time")) || _gtext(row, colmap, "sales_time"),
+    sales_time: datePart(timeRaw) || timeRaw,
     // 小票号：仅用于跨文件自动去重（dedupSales），不参与任何业务计算、不进列表、不进导出。
     ticket_no: _gtext(row, colmap, "ticket_no") || null,
     order_status: _gtext(row, colmap, "order_status") || null,
@@ -257,14 +269,21 @@ async function loadWorkbook(file) {
   return out;
 }
 
+// 返回值里的 issues 记录「有数据但没能进名单」的表，供界面明确告知：
+//   { kind:"unknown", file, sheet, rows }  ← 表类型没识别出来，整张表被跳过
+//   { kind:"error",   file, sheet:"", rows:0, message } ← 文件解析直接抛错
+// 为什么必须回传：这些数据以前只 console.warn，界面上毫无痕迹 ——
+// 用户看到的就是"销售明细里明明有这个人，名单里搜不到"（2026-10-26 报障）。
 async function processFiles(files) {
-  const result = { sales: [], followups: [], cycles: {} };
+  const result = { sales: [], followups: [], cycles: {}, issues: [] };
   for (const f of files) {
     try {
       const sheets = await loadWorkbook(f);
       for (const sh of sheets) {
         if (sh.ttype === "unknown") {
           console.warn("无法识别表类型:", sh.source_file, sh.sheet_name, sh.cols.slice(0, 10));
+          // 完全空白的 sheet（如导出时留下的空页）不报，避免每次上传都弹提示
+          if (sh.rows.length) result.issues.push({ kind: "unknown", file: sh.source_file, sheet: sh.sheet_name, rows: sh.rows.length });
           continue;
         }
         if (sh.ttype === "cycle") {
@@ -280,6 +299,7 @@ async function processFiles(files) {
       }
     } catch (e) {
       console.warn("处理文件失败", f.name, e);
+      result.issues.push({ kind: "error", file: f.name, sheet: "", rows: 0, message: (e && e.message) || String(e) });
     }
   }
   return result;

@@ -279,21 +279,25 @@ function resetState() {
   eq('医院筛选能命中该医疗单位', App.filterRows(rows).length, 1);
   S.hospitals.clear();
 
-  // 7.7 映射常量与产物防线：hospital 关键字池只能是「医疗单位」，且必须在精确匹配集合内
+  // 7.7 映射常量与产物防线：hospital 关键字池 = 「医疗单位」+「处方医院」，且两者都在精确匹配集合内
+  //     （「处方医院」是 POS 销售明细格式里唯一的医院列，2026-10-26 补；仍是精确匹配，不做子串）
   const hr = global.Mapping.KEYWORD_RULES.find(r => r[0] === 'hospital');
-  eq('hospital 关键字池 = ["医疗单位"]', hr && hr[1], ['医疗单位']);
+  eq('hospital 关键字池 = ["医疗单位","处方医院"]', hr && hr[1], ['医疗单位', '处方医院']);
   ok('hospital 在 EXACT_ONLY_FIELDS 中（不走子串匹配）',
     global.Mapping.EXACT_ONLY_FIELDS.has('hospital'));
   ok('kwHit 对 hospital 做精确匹配（近似列名不命中）',
     global.Mapping.kwHit('hospital', '医疗单位', '医疗单位') === true &&
     global.Mapping.kwHit('hospital', '首诊医院', '医疗单位') === false &&
     global.Mapping.kwHit('hospital', '医疗机构', '医疗单位') === false);
+  ok('kwHit：处方医院 精确命中，处方医院名称 不命中',
+    global.Mapping.kwHit('hospital', '处方医院', '处方医院') === true &&
+    global.Mapping.kwHit('hospital', '处方医院名称', '处方医院') === false);
   for (const f of ['index.html', 'index.single.html']) {
     const p = path.join(__dirname, '..', f);
     if (!fs.existsSync(p)) continue;
     const code = fs.readFileSync(p, 'utf8');
-    ok('产物 ' + f + ' 中 hospital 关键字池已改为 ["医疗单位"]',
-      /\["hospital",\s*\["医疗单位"\]\]/.test(code));
+    ok('产物 ' + f + ' 中 hospital 关键字池已改为 ["医疗单位","处方医院"]',
+      /\["hospital",\s*\["医疗单位",\s*"处方医院"\]\]/.test(code));
     ok('产物 ' + f + ' 含 EXACT_ONLY_FIELDS 精确匹配机制', code.includes('EXACT_ONLY_FIELDS'));
   }
 

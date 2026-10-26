@@ -284,9 +284,15 @@ function loadPipeline(fake) {
     ok(/segMonthsOf\(p\)/.test(src), "★ 确定时把每个品种的所选月份一并带走");
     ok(/querySelectorAll\("input\[type=checkbox\]\[data-prod\]"\)/.test(src), "勾选态统一绑定");
 
-    // 筛选：勾了历史品种才设筛选，否则清空（修掉残留 bug）
-    ok(/state\.products = picked\.length \? new Set\(picked\) : new Set\(\);/.test(src),
-      "★ 勾选历史品种 → 筛选设为已加载品种；未勾 → 清空（修复筛选残留）");
+    // 筛选：分析完成后统一清空全部名单筛选（2026-10-26 改）
+    // 旧实现是「勾了历史品种 → 品种筛选设成 picked」。那是错的：本次上传、但本地还没留档的品种
+    // 会被这个筛选整个挡住，表现为「明细里有这个患者，列表里搜不到」。现在一律清空 = 全部显示。
+    ok(/resetListFilters\(\);/.test(src),
+      "★ 分析完成后调用 resetListFilters()（上一批的筛选不残留、品种不再被收窄）");
+    ok(/function resetListFilters\(\)\s*\{[\s\S]{0,400}state\.products\.clear\(\)/.test(src),
+      "★ resetListFilters 会清空品种筛选（不窄化为「已加载品种」）");
+    ok(!/state\.products = picked\.length/.test(src),
+      "★ 不再把品种筛选设成 picked（否则未留档品种的患者会被整体挡住）");
   }
 
   console.log("\n===== [C] 产物防线 =====");
