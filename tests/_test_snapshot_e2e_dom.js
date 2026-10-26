@@ -132,6 +132,15 @@ const eq = (name, got, want) => {
       .filter(s => /^\s*\(function\s*\(\)\s*\{/.test(s.textContent || '') &&
         (s.textContent || '').includes('window.AppCore.loadSnapshot'));
     eq('快照启动脚本恰好 1 个', bootScripts.length, 1);
+    // 操作期浮层：品种选择弹窗在生成时真实存在于 body 上，必须不能进快照。
+    // 快照是静态 HTML，弹窗的取消/确定事件绑定早已丢失 → 一旦被固化就永远浮着（用户报障）。
+    eq('快照中不含「选择快照包含的品种」弹窗节点',
+      domS.window.document.querySelectorAll('.fam-pick-mask').length, 0);
+    ok('快照中不含弹窗标题文本（活节点层面）',
+      ![...domS.window.document.querySelectorAll('.fp-head b')].some(b => b.textContent.includes('选择快照包含的品种')));
+    const ldSnap = domS.window.document.querySelector('#loading');
+    ok('快照中加载遮罩处于隐藏态（不会盖住页面）',
+      !!ldSnap && ldSnap.classList.contains('hidden'), ldSnap ? JSON.stringify(ldSnap.className) : 'missing');
     // 解析内嵌数据：从末尾的注入脚本抓（app.js 源码内也含 </script> 字面，不能用非贪婪匹配）
     const marker = 'window.__SNAP__=';
     const start = snapHtml.lastIndexOf(marker);
@@ -148,6 +157,21 @@ const eq = (name, got, want) => {
       ok('快照内的姓名已脱敏', snap.rows[0].patient_name !== '张小三', JSON.stringify(snap.rows[0].patient_name));
     }
   }
+
+  console.log('\n[1b] 生成快照不得改动本页（活页面不能被切成快照只读态）');
+  // 旧写法：把数据脚本 + 启动脚本插进**活页面**再取 outerHTML，script 一插入就被浏览器执行，
+  // loadSnapshot 于是把本页也切成快照模式（上传区/导出按钮消失、提示条亮起），不刷新就没法继续用。
+  // 现在序列化的是 documentElement 的克隆体，克隆体不在文档里 → 注入脚本不会执行。
+  const liveDoc = w.document;
+  ok('本页上传区仍可用（#dropAll 未隐藏）', !liveDoc.querySelector('#dropAll').classList.contains('hidden'),
+    JSON.stringify(liveDoc.querySelector('#dropAll').className));
+  ok('本页导出按钮仍可见（#exportBtn 未隐藏）', !liveDoc.querySelector('#exportBtn').classList.contains('hidden'),
+    JSON.stringify(liveDoc.querySelector('#exportBtn').className));
+  ok('本页未亮起「快照」提示条', liveDoc.querySelector('#snapBanner').classList.contains('hidden'),
+    JSON.stringify(liveDoc.querySelector('#snapBanner').className));
+  ok('本页整体小结面板仍在可见区（未被摘走）', !!liveDoc.querySelector('#summaryPanel'));
+  eq('本页没有残留的临时数据脚本',
+    [...liveDoc.querySelectorAll('script')].filter(s => /^\s*window\.__SNAP__=/.test(s.textContent || '')).length, 0);
 
   console.log('\n[2] 打开这份快照：脱敏开关隐藏、小结不显示、品种筛选可用');
   if (snapHtml) {

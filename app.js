@@ -2928,35 +2928,38 @@ async function doSnapshot(desen) {
       if(window.__SNAP__&&window.AppCore){window.AppCore.loadSnapshot(window.__SNAP__);}
       else{var ld=document.getElementById('loading');if(ld){ld.querySelector('.txt').textContent='快照加载失败：应用脚本未加载。';ld.classList.remove('hidden');}}
     })();`;
-    // 剥离库代码 + 移除整体小结 + 注入数据/启动脚本：全部用真实 DOM 操作（快照为只读视图，去掉 Excel 解析库减小体积）。
-    // 不能用文本正则：应用代码自身内联时也含 <script>/</body> 等字面，正则会误删应用代码或注入错位。
+    // 快照 HTML = 「本页 DOM 的克隆体」序列化而来，绝不在活页面上做增删。
+    // 旧写法是在活页面里删库、删小结、插数据脚本，再取 documentElement.outerHTML，有三个副作用：
+    //   1) 品种选择弹窗（.fam-pick-mask）此时仍挂在 body 上，会被一起固化进快照。快照是静态 HTML，
+    //      弹窗的取消/确定/遮罩点击都是运行时绑定的事件 → 打开后浮在上面点不动（用户报障的现象）。
+    //   2) 注入的启动脚本一插入<body>就被浏览器执行，loadSnapshot 会把**本页**也切成快照只读态
+    //      （上传区/导出按钮消失、快照提示条亮起），不刷新页面就没法继续用。
+    //   3) 只能靠「先删 #summaryPanel、事后按 nextSibling 放回」的补救办法，节点顺序一变就出错。
+    // 克隆体不在文档树里：注入的 <script> 不会执行，摘掉的浮层也不影响本页。
+    const root = document.documentElement.cloneNode(true);
+    // 剥离 Excel 解析/导出库：快照是只读视图，用不到（单文件版里它们是内联的大 script）
     const isLib = s => {
-      const src = s.getAttribute && s.getAttribute("src") || "";
+      const src = (s.getAttribute && s.getAttribute("src")) || "";
       const id = s.id || "";
       return /vendor\/(xlsx|exceljs)\.min\.js$/.test(src) || id === "__vnd_xlsx__" || id === "__vnd_exceljs__";
     };
-    const libScripts = Array.from(document.querySelectorAll("script")).filter(isLib);
-    libScripts.forEach(s => s.remove());
+    Array.from(root.querySelectorAll("script")).filter(isLib).forEach(s => s.remove());
     // 移除「整体小结」：快照内没有销售明细，小结数字无法随筛选重算，
-    // 保留会让人误以为数字跟着筛选走（用户明确要求去掉）。分类维护面板已挪到小结外层，不受影响。
-    const sumPanel = document.getElementById("summaryPanel");
-    const sumParent = sumPanel && sumPanel.parentNode;
-    const sumNext = sumPanel && sumPanel.nextSibling;
-    if (sumParent) sumParent.removeChild(sumPanel);
-    const ds = document.createElement("script");
-    ds.textContent = "window.__SNAP__=" + dataJson;
-    const bs = document.createElement("script");
-    bs.textContent = bootCode;
-    document.body.appendChild(ds);
-    document.body.appendChild(bs);
-    const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
-    ds.remove(); bs.remove();
-    // 放回页面（下次生成快照仍需该节点；若原位置节点已被移除则退回 appendChild）
-    if (sumParent) {
-      if (sumNext && sumNext.parentNode === sumParent) sumParent.insertBefore(sumPanel, sumNext);
-      else sumParent.appendChild(sumPanel);
-    }
-    libScripts.forEach(s => document.head.appendChild(s)); // 放回页面（Excel 导出仍可用）
+    // 保留会让人误以为数字跟着筛选走（用户明确要求去掉）。分类维护面板在小结外层，不受影响。
+    const sumPanel = root.querySelector("#summaryPanel");
+    if (sumPanel) sumPanel.remove();
+    // 兜底：克隆体里残留的操作期浮层一律摘掉（含别人将来加的同类浮层），加载遮罩固定隐藏
+    Array.from(root.querySelectorAll(".fam-pick-mask")).forEach(n => n.remove());
+    const cloneLoading = root.querySelector("#loading");
+    if (cloneLoading) cloneLoading.classList.add("hidden");
+    // 注入数据 + 启动脚本：克隆体不在文档中，这里的 script 只会被序列化成文本，不会在当前页面执行
+    const rootBody = root.querySelector("body") || root;
+    ["window.__SNAP__=" + dataJson, bootCode].forEach(txt => {
+      const sc = document.createElement("script");
+      sc.textContent = txt;
+      rootBody.appendChild(sc);
+    });
+    const html = "<!DOCTYPE html>\n" + root.outerHTML;
     download(new Blob([html], { type: "text/html" }), snapshotFileName(desen, snapFams));
   } catch (err) {
     alert("快照生成失败：" + (err && err.message ? err.message : err));

@@ -25,6 +25,15 @@ function makeEl(tag, id) {
     insertBefore(c) { this.children.push(c); c.parentNode = this; return c; },
     removeChild(c) { this.children = this.children.filter(x => x !== c); if (c) c.parentNode = null; return c; },
     remove() { if (this.parentNode) this.parentNode.removeChild(this); },
+    // doSnapshot 现在序列化「documentElement 的克隆体」（不在活页面上增删），stub 需要一个能返回
+    // 可继续自查节点的 cloneNode；这里只做浅克隆，够 doSnapshot 的查/删/追加用
+    cloneNode() {
+      const c = makeEl(this.tagName.toLowerCase(), this.id);
+      c.className = this.className; c._html = this._html;
+      c.children = this.children.slice();
+      return c;
+    },
+    get outerHTML() { return this._html || ''; },
     get innerHTML() { return this._html; },
     set innerHTML(v) {
       this._html = String(v);
@@ -278,7 +287,11 @@ const ROWS = [
     ok(f + '：含 askSnapshotFams（品种弹窗）', code.includes('askSnapshotFams'));
     ok(f + '：含 snapshotFileName（文件名带品种）', code.includes('snapshotFileName'));
     ok(f + '：含 snapFams（快照内品种选项清单）', code.includes('snapFams'));
-    ok(f + '：含小结面板移除逻辑', code.includes('summaryPanel') && code.includes('sumParent'));
+    ok(f + '：含小结面板移除逻辑（在克隆体上移除）',
+      code.includes('root.querySelector("#summaryPanel")') && code.includes('document.documentElement.cloneNode(true)'));
+    ok(f + '：快照序列化不再往活页面上插脚本（克隆体 + 摘掉操作期浮层）',
+      !code.includes('document.body.appendChild(ds)') &&
+      code.includes('root.querySelectorAll(".fam-pick-mask")'));
     ok(f + '：含脱敏开关整条隐藏', code.includes('desenBar'));
     ok(f + '：脱敏开关栏带 id="desenBar"', code.includes('id="desenBar"'));
     ok(f + '：品种弹窗样式已内联', code.includes('.fam-pick-mask'));
